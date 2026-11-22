@@ -11,3 +11,4 @@ _trash/
 
 .superpowers/
 __pycache__/
+*.vninja.bak

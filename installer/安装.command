@@ -141,10 +141,13 @@ locale_for() {
 }
 
 # ---- 0. 前置检查 ----
-CLASH_DIR="$H/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev"
+CLASH_DIR_VN="$H/Library/Application Support/io.github.clash-verge-ninja.clash-verge-ninja"
+CLASH_DIR_CV="$H/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev"
 FLCLASH_DIR="$H/Library/Application Support/com.follow.clash"
-if [ -d "$CLASH_DIR" ]; then
-    MODE="clash-verge"
+if [ -d "$CLASH_DIR_VN" ]; then
+    MODE="v-ninja"; CLASH_DIR="$CLASH_DIR_VN"
+elif [ -d "$CLASH_DIR_CV" ]; then
+    MODE="clash-verge"; CLASH_DIR="$CLASH_DIR_CV"
 elif [ -d "$FLCLASH_DIR" ]; then
     MODE="flclash"
 elif [ -d "/Applications/Bettbox.app" ]; then
@@ -155,7 +158,7 @@ else
     echo "未自动识别到代理客户端,请手动选择:"
     echo "  1) clash-verge    2) flclash         3) shadowrocket"
     echo "  4) sing-box       5) clashx          6) surge"
-    echo "  7) bettbox        8) auto(任一命中即活)"
+    echo "  7) bettbox        8) auto(任一命中即活)  9) v-ninja(Clash V-Ninja)"
     read -r -p "请输入序号或名称: " pick
     case "$pick" in
         1|clash-verge)  MODE="clash-verge" ;;
@@ -166,10 +169,16 @@ else
         6|surge)         MODE="surge" ;;
         7|bettbox)       MODE="bettbox" ;;
         8|auto)          MODE="auto" ;;
+        9|v-ninja)       MODE="v-ninja" ;;
         *) echo "未识别的选择,退出"; exit 1 ;;
     esac
 fi
-echo "✓ 代理客户端: $MODE"
+case "$MODE" in
+    v-ninja)      CLIENT_NAME="Clash V-Ninja" ;;
+    clash-verge)  CLIENT_NAME="Clash Verge" ;;
+    *)            CLIENT_NAME="$MODE" ;;
+esac
+echo "✓ 代理客户端: $MODE($CLIENT_NAME)"
 if [ ! -d /Applications/Claude.app ]; then
     echo "⚠️  未检测到 Claude 桌面版(/Applications/Claude.app),请先安装。"
     read -n 1 -s -r -p "按任意键退出..."; exit 1
@@ -186,19 +195,81 @@ if ! command -v swiftc >/dev/null 2>&1; then
 fi
 echo "✓ 前置检查通过($MODE / Claude / python3 / swiftc)"
 
-# ---- 1. 自动探测代理组名(仅 Clash Verge;多个 select 组时让用户选,避免静默选错专线) ----
+# Clash 系客户端的组名来源:Clash Verge 读 clash-verge.yaml;V-Ninja 的组在订阅文件里
+clash_config_yaml() {
+    case "$MODE" in
+        v-ninja)
+            local cur f
+            cur=$(sed -n 's/^current:[[:space:]]*//p' "$CLASH_DIR/profiles.yaml" 2>/dev/null | head -1)
+            if [ -n "$cur" ] && [ -f "$CLASH_DIR/profiles/$cur.yaml" ]; then
+                echo "$CLASH_DIR/profiles/$cur.yaml"; return
+            fi
+            for f in "$CLASH_DIR"/profiles/*.yaml; do
+                [ -f "$f" ] && grep -q '^proxy-groups:' "$f" && { echo "$f"; return; }
+            done
+            echo "$CLASH_DIR/config.yaml" ;;
+        *) echo "$CLASH_DIR/clash-verge.yaml" ;;
+    esac
+}
+
+# ---- 1. 自动探测代理组名(仅 Clash 系;多个 select 组时让用户选,避免静默选错专线) ----
 GRP=""
-if [ "$MODE" = "clash-verge" ]; then
+if [ "$MODE" = "clash-verge" ] || [ "$MODE" = "v-ninja" ]; then
     GRPS=()
-    while IFS= read -r g; do GRPS+=("$g"); done < <(awk '
-        /^proxy-groups:/ {f=1; next}
-        f && /^[a-zA-Z]/ {f=0}
-        f && /- name:/ { n=$0; sub(/.*- name: */, "", n); gsub(/"/, "", n) }
-        f && /type: *select/ { print n }
-    ' "$CLASH_DIR/clash-verge.yaml" 2>/dev/null)
+    CLASH_YAML=$(clash_config_yaml)
+    while IFS= read -r g; do [ -n "$g" ] && GRPS+=("$g"); done < <(python3 - "$CLASH_YAML" <<'PY_GROUPS'
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(0)
+match = re.search(r"(?m)^proxy-groups:[ \t]*$", text)
+if not match:
+    raise SystemExit(0)
+body = text[match.end():]
+end = re.search(r"(?m)^[A-Za-z]", body)
+if end:
+    body = body[:end.start()]
+lines = body.splitlines()
+indents = [len(line) - len(line.lstrip()) for line in lines if line.strip().startswith("-")]
+if not indents:
+    raise SystemExit(0)
+entry_indent = min(indents)
+
+def flush(entry):
+    if not entry:
+        return
+    kind = entry.get("type", "").strip().strip("\"'")
+    name = entry.get("name", "").strip().strip("\"'")
+    if kind == "select" and name:
+        print(name)
+
+entry = {}
+for line in lines:
+    stripped = line.strip()
+    if not stripped:
+        continue
+    indent = len(line) - len(line.lstrip())
+    if stripped.startswith("-") and indent == entry_indent:
+        flush(entry)
+        entry = {}
+        stripped = stripped[1:].strip()
+        if not stripped or ":" not in stripped:
+            continue
+        indent = entry_indent + 1
+    if ":" in stripped and indent > entry_indent:
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        if key in ("name", "type"):
+            entry[key] = value.strip()
+flush(entry)
+PY_GROUPS
+    )
     if [ "${#GRPS[@]}" -eq 0 ]; then
         echo ""
-        echo "未能自动识别你的代理组名,请打开 Clash Verge 查看「代理」页面顶部的组名。"
+        echo "未能自动识别你的代理组名,请打开 $CLIENT_NAME 查看「代理」页面顶部的组名。"
         read -r -p "请输入代理组名: " GRP
         [ -z "$GRP" ] && { echo "未输入,退出"; exit 1; }
     elif [ "${#GRPS[@]}" -eq 1 ]; then
@@ -284,7 +355,7 @@ sed -i '' \
     -e "s|^LOCALE_TARGET=\".*\"|LOCALE_TARGET=\"$LOCALE\"|" \
     "$H/.local/bin/claude-switch.sh"
 
-# 保镖/时区看门狗脚本:物化到临时目录,由 sudo 段装入 root 所有的系统目录(用户态不可写,防提权)
+# 保镖/时区看门狗脚本:物化到临时目录,由管理员授权段装入 root 所有的系统目录(用户态不可写,防提权)
 STAGE=$(mktemp -d)
 sed -e "s|__HOME__|$H|g" -e "s|__PROXY_MODE__|$MODE|g" \
     "$REPO/daemons/claude-bodyguard.sh" > "$STAGE/claude-bodyguard.sh"
@@ -361,8 +432,8 @@ else
     echo "✓ App 已安装到 $APP"
 fi
 
-# ---- 5. 生成全局扩展脚本(仅 Clash Verge;保留已有 main 与无关配置) ----
-if [ "$MODE" = "clash-verge" ]; then
+# ---- 5. 生成全局扩展脚本(仅 Clash 系;保留已有 main 与无关配置) ----
+if [ "$MODE" = "clash-verge" ] || [ "$MODE" = "v-ninja" ]; then
     # 复用核心脚本里的 write_merge_rules(隐藏入口),保证与 fix() 行为一致
     if "$H/.local/bin/claude-switch.sh" write-merge-rules; then
         echo "✓ 全局 Script.js 已写入(含 UDP 端口策略;保留已有 main;待重启后验证内核加载)"
@@ -401,8 +472,21 @@ else
     echo "$v6" | grep -qi 'off' || SYSCMDS="$SYSCMDS networksetup -setv6off Wi-Fi;"
     SYSCMDS="$SYSCMDS dscacheutil -flushcache; killall -HUP mDNSResponder"
     echo ""
-    echo "接下来需要输入一次开机密码,用于: 安装守护进程(系统目录) + 锁定时区($TZV) + 关闭IPv6"
-    sudo bash -c "$SYSCMDS" && echo "✓ 系统级配置完成" || echo "✗ 系统级配置被取消,可稍后重新运行安装程序"
+    echo "接下来会弹出系统授权窗口,请输入管理员账号和密码（无需切换当前用户）"
+    echo "用于: 安装守护进程(系统目录) + 锁定时区($TZV) + 关闭IPv6"
+    if /usr/bin/osascript - "$SYSCMDS" <<'ADMIN_AUTH_APPLESCRIPT'
+on run argv
+    do shell script ("/bin/bash -c " & quoted form of (item 1 of argv)) with administrator privileges
+end run
+ADMIN_AUTH_APPLESCRIPT
+    then
+        echo "✓ 系统级配置完成"
+    else
+        echo "✗ 管理员授权被取消或系统级配置失败，请重新运行安装程序"
+        rm -rf "$STAGE"
+        read -n 1 -s -r -p "按任意键退出..."
+        exit 1
+    fi
     rm -rf "$STAGE"
 
     # 自动更新:用户态 LaunchAgent(每12小时),不走 root,降低供应链风险
@@ -417,11 +501,11 @@ else
     fi
 fi
 
-# ---- 7. 重启 Clash 使规则生效(仅 Clash Verge) ----
-if [ -z "$DRYRUN" ] && [ "$MODE" = "clash-verge" ]; then
-    osascript -e 'tell application "Clash Verge" to quit' >/dev/null 2>&1
+# ---- 7. 重启客户端使规则生效(仅 Clash 系) ----
+if [ -z "$DRYRUN" ] && { [ "$MODE" = "clash-verge" ] || [ "$MODE" = "v-ninja" ]; }; then
+    osascript -e "tell application \"$CLIENT_NAME\" to quit" >/dev/null 2>&1
     sleep 2
-    open -a "Clash Verge" >/dev/null 2>&1
+    open -a "$CLIENT_NAME" >/dev/null 2>&1
 fi
 
 # ---- 8. 自检 ----

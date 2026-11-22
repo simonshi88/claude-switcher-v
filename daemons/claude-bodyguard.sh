@@ -29,7 +29,9 @@ ifconfig 2>/dev/null | grep -q 'inet 198\.18\.' || ok=0
 # 内核在线判定:按安装时识别的客户端分派
 case "$MODE" in
     clash-verge)
-        pgrep -f verge-mihomo >/dev/null 2>&1 || ok=0 ;;
+        pgrep -f '[v]erge-mihomo' >/dev/null 2>&1 || ok=0 ;;
+    v-ninja)
+        pgrep -x ninja-mihomo >/dev/null 2>&1 || ok=0 ;;
     flclash)
         { pgrep -f FlClashCore >/dev/null 2>&1 || pgrep -x FlClash >/dev/null 2>&1; } || ok=0 ;;
     bettbox)
@@ -49,7 +51,7 @@ case "$MODE" in
     auto)
         : ;;  # auto 模式只查 TUN
     *)
-        pgrep -f verge-mihomo >/dev/null 2>&1 || ok=0 ;;
+        { pgrep -x ninja-mihomo >/dev/null 2>&1 || pgrep -f '[v]erge-mihomo' >/dev/null 2>&1; } || ok=0 ;;
 esac
 
 # Claude Code CLI 进程: native claude/claude.exe 与 npm/bun 的 @anthropic-ai/claude-code。

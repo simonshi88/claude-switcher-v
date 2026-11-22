@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "1.1",
+      "file": "core/claude-switch.sh",
+      "old": "# 代理客户端: clash-verge|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto",
+      "new": "# 代理客户端: clash-verge|v-ninja|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto",
+      "count": 1,
+      "note": "模式列表"
+    },
+    {
+      "id": "1.2",
+      "file": "core/claude-switch.sh",
+      "old": "CLASH_DIR=\"$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev\"",
+      "new": "# Clash 系客户端配置目录:按客户端模式派生,避免把某个 fork 的目录写死在上游代码里\nclash_dir_for_mode() {\n    case \"$1\" in\n        v-ninja) echo \"$HOME/Library/Application Support/io.github.clash-verge-ninja.clash-verge-ninja\" ;;\n        *)       echo \"$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev\" ;;\n    esac\n}\nCLASH_DIR=\"$(clash_dir_for_mode \"$PROXY_MODE\")\"",
+      "count": 1,
+      "note": "配置目录按模式派生"
+    },
+    {
+      "id": "1.3",
+      "file": "core/claude-switch.sh",
+      "old": "        clash-verge)  echo \"Clash Verge\" ;;",
+      "new": "        clash-verge)  echo \"Clash Verge\" ;;\n        v-ninja)      echo \"Clash V-Ninja\" ;;",
+      "count": 2,
+      "note": "proxy_name / proxy_app_name"
+    },
+    {
+      "id": "1.4",
+      "file": "core/claude-switch.sh",
+      "old": "# 代理客户端显示名(供检查细节输出)\nproxy_name() {",
+      "new": "# 是否 Clash 系客户端(两种 fork 都走全局脚本这条路)\nis_clash_mode() {\n    case \"$PROXY_MODE\" in clash-verge|v-ninja) return 0 ;; *) return 1 ;; esac\n}\n\n# 代理客户端显示名(供检查细节输出)\nproxy_name() {",
+      "count": 1,
+      "note": "is_clash_mode 辅助函数"
+    },
+    {
+      "id": "1.6a",
+      "file": "core/claude-switch.sh",
+      "old": "# 代理内核在线判定:按安装时识别的客户端分派;auto 时任一命中即活",
+      "new": "# Clash 系内核在线判定:兼容上游 Clash Verge(verge-mihomo)与 V-Ninja(ninja-mihomo)两种二进制名\nclash_core_up() { pgrep -x ninja-mihomo >/dev/null 2>&1 || pgrep -f '[v]erge-mihomo' >/dev/null 2>&1; }\n\n# 代理内核在线判定:按安装时识别的客户端分派;auto 时任一命中即活",
+      "count": 1,
+      "note": "内核判活辅助函数"
+    },
+    {
+      "id": "1.6b",
+      "file": "core/claude-switch.sh",
+      "old": "pgrep -f verge-mihomo >/dev/null 2>&1",
+      "new": "clash_core_up",
+      "count": 7,
+      "note": "7 处内联网核判定改用辅助函数"
+    },
+    {
+      "id": "1.7",
+      "file": "core/claude-switch.sh",
+      "old": "    \"${BASH:-/bin/bash}\" \"$0\" clash-rules \"$action\" \"$CLASH_DIR\" \"$BASE\" \"$PROXY_GROUP\" \"${WEBRTC_POLICY:-}\" \"$@\"",
+      "new": "    CLASH_CLIENT_MODE=\"$PROXY_MODE\" \"${BASH:-/bin/bash}\" \"$0\" clash-rules \"$action\" \"$CLASH_DIR\" \"$BASE\" \"$PROXY_GROUP\" \"${WEBRTC_POLICY:-}\" \"$@\"",
+      "count": 1,
+      "note": "把模式传给内嵌 Python"
+    },
+    {
+      "id": "1.5",
+      "file": "core/claude-switch.sh",
+      "old": "        clash-verge)  clash_core_up ;;",
+      "new": "        clash-verge)  clash_core_up ;;\n        v-ninja)      clash_core_up ;;",
+      "count": 1,
+      "note": "proxy_alive 增加 v-ninja"
+    },
+    {
+      "id": "1.8",
+      "file": "core/claude-switch.sh",
+      "old": "    for name in (\"clash-verge.yaml\", \"verge.yaml\"):",
+      "new": "    names = ((\"clash-verge.yaml\", \"config.yaml\", \"verge.yaml\")\n             if CLIENT_MODE == \"v-ninja\" else (\"clash-verge.yaml\", \"verge.yaml\"))\n    for name in names:",
+      "count": 1,
+      "note": "控制接口候选文件按模式选择"
+    },
+    {
+      "id": "1.9",
+      "file": "core/claude-switch.sh",
+      "old": "MERGE_END = \"# <<< claude-switcher pinned rules <<<\"",
+      "new": "MERGE_END = \"# <<< claude-switcher pinned rules <<<\"\nCLIENT_MODE = os.environ.get(\"CLASH_CLIENT_MODE\", \"clash-verge\")",
+      "count": 1,
+      "note": "内嵌 Python 读取客户端模式"
+    },
+    {
+      "id": "1.10",
+      "file": "core/claude-switch.sh",
+      "old": "[ \"$PROXY_MODE\" = \"clash-verge\" ]",
+      "new": "is_clash_mode",
+      "count": 8,
+      "note": "8 处模式判定改用 is_clash_mode"
+    },
+    {
+      "id": "1.11",
+      "file": "core/claude-switch.sh",
+      "old": "fix() {\n    if [ \"$PROXY_MODE\" = \"flclash\" ]; then",
+      "new": "fix() {\n    local capp\n    capp=$(proxy_app_name)\n    if [ \"$PROXY_MODE\" = \"flclash\" ]; then",
+      "count": 1,
+      "note": "fix 里取当前客户端的 App 名"
+    },
+    {
+      "id": "1.12a",
+      "file": "core/claude-switch.sh",
+      "old": "echo \"FIX:正在启动 Clash Verge...\"",
+      "new": "echo \"FIX:正在启动 $capp...\"",
+      "count": 1,
+      "note": "启动文案"
+    },
+    {
+      "id": "1.12b",
+      "file": "core/claude-switch.sh",
+      "old": "open -a \"Clash Verge\"",
+      "new": "open -a \"$capp\"",
+      "count": 3,
+      "note": "3 处启动客户端"
+    },
+    {
+      "id": "1.12c",
+      "file": "core/claude-switch.sh",
+      "old": "osascript -e 'tell application \"Clash Verge\" to quit' >/dev/null 2>&1",
+      "new": "osascript -e \"tell application \\\"$capp\\\" to quit\" >/dev/null 2>&1",
+      "count": 2,
+      "note": "2 处退出客户端"
+    },
+    {
+      "id": "1.12d",
+      "file": "core/claude-switch.sh",
+      "old": "请打开 Clash Verge 检查节点/线路",
+      "new": "请打开 $capp 检查节点/线路",
+      "count": 1,
+      "note": "失败提示文案"
+    },
+    {
+      "id": "1.13a",
+      "file": "core/claude-switch.sh",
+      "old": "# 置顶规则:Clash Verge 验证运行内核;全局模式下全部流量走代理,规则不适用;其他客户端只看行为检测",
+      "new": "# 置顶规则:Clash 系客户端验证运行内核;全局模式下全部流量走代理,规则不适用;其他客户端只看行为检测",
+      "count": 1,
+      "note": "注释"
+    },
+    {
+      "id": "1.13b",
+      "file": "core/claude-switch.sh",
+      "old": "# 置顶规则:Clash Verge 验证运行内核;全局模式下规则不适用(全部流量已走代理)",
+      "new": "# 置顶规则:Clash 系客户端验证运行内核;全局模式下规则不适用(全部流量已走代理)",
+      "count": 1,
+      "note": "注释"
+    },
+    {
+      "id": "1.13c",
+      "file": "core/claude-switch.sh",
+      "old": "\"\"\"Install and verify the Clash Verge global script without trusting Merge.yaml text.\"\"\"",
+      "new": "\"\"\"Install and verify the Clash-family global script without trusting Merge.yaml text.\"\"\"",
+      "count": 1,
+      "note": "Python docstring"
+    },
+    {
+      "id": "1.13d",
+      "file": "core/claude-switch.sh",
+      "old": "# 生成的配置可能记着已失效的临时 socket(Clash Verge 重启后路径会变);",
+      "new": "# 生成的配置可能记着已失效的临时 socket(客户端重启后路径会变);",
+      "count": 1,
+      "note": "注释"
+    },
+    {
+      "id": "1.14",
+      "file": "core/claude-switch.sh",
+      "old": "        clash-verge|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto) ;;",
+      "new": "        clash-verge|v-ninja|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto) ;;",
+      "count": 1,
+      "note": "set-client 接受 v-ninja"
+    },
+    {
+      "id": "1.15",
+      "file": "core/claude-switch.sh",
+      "old": "        *) echo \"FAIL:用法: claude-switch.sh set-client <clash-verge|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto>\"; return 1 ;;",
+      "new": "        *) echo \"FAIL:用法: claude-switch.sh set-client <clash-verge|v-ninja|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto>\"; return 1 ;;",
+      "count": 1,
+      "note": "set-client 用法提示"
+    },
+    {
+      "id": "1.16",
+      "file": "core/claude-switch.sh",
+      "old": "    PROXY_MODE=\"$mode\"\n    echo \"OK:代理客户端已设为 $mode\"",
+      "new": "    PROXY_MODE=\"$mode\"\n    CLASH_DIR=\"$(clash_dir_for_mode \"$PROXY_MODE\")\"\n    echo \"OK:代理客户端已设为 $mode\"",
+      "count": 1,
+      "note": "切换模式后重算配置目录"
+    },
+    {
+      "id": "1.17",
+      "file": "core/claude-switch.sh",
+      "old": "    echo \"clients=clash-verge,flclash,bettbox,shadowrocket,sing-box,clashx,surge\"",
+      "new": "    echo \"clients=clash-verge,v-ninja,flclash,bettbox,shadowrocket,sing-box,clashx,surge\"",
+      "count": 1,
+      "note": "get-client 列表"
+    },
+    {
+      "id": "1.18",
+      "file": "core/claude-switch.sh",
+      "old": "    echo \"INFO:重新运行 checkdetail 生效;非 Clash 客户端请在应用内自行添加 Claude 域名置顶规则\"",
+      "new": "    if is_clash_mode; then\n        echo \"INFO:重新运行 checkdetail 生效;置顶规则会在下次 fix 时重新写入\"\n    else\n        echo \"INFO:重新运行 checkdetail 生效;请在应用内自行添加 Claude 域名置顶规则\"\n    fi",
+      "count": 1,
+      "note": "切换提示按模式区分"
+    },
+    {
+      "id": "1.19a",
+      "file": "core/claude-switch.sh",
+      "old": "    if tun_up; then echo 'TUN网卡=ok'; else echo 'TUN网卡=fail:不在线'; fi",
+      "new": "    if tun_up; then echo 'TUN网卡=ok:198.18 网段已接管'; else echo 'TUN网卡=fail:不在线'; fi",
+      "count": 1,
+      "note": "自检明细"
+    },
+    {
+      "id": "1.19b",
+      "file": "core/claude-switch.sh",
+      "old": "    if [ \"$tz\" = \"/var/db/timezone/zoneinfo/$TZ_TARGET\" ]; then echo '时区=ok'; else echo \"时区=fail:$tz\"; fi",
+      "new": "    if [ \"$tz\" = \"/var/db/timezone/zoneinfo/$TZ_TARGET\" ]; then echo \"时区=ok:$TZ_TARGET\"; else echo \"时区=fail:$tz\"; fi",
+      "count": 1,
+      "note": "自检明细"
+    },
+    {
+      "id": "1.19c",
+      "file": "core/claude-switch.sh",
+      "old": "    if [ \"$locale\" = \"$LOCALE_TARGET\" ]; then echo '地区=ok'; else echo \"地区=fail:$locale\"; fi",
+      "new": "    if [ \"$locale\" = \"$LOCALE_TARGET\" ]; then echo \"地区=ok:$LOCALE_TARGET\"; else echo \"地区=fail:$locale\"; fi",
+      "count": 1,
+      "note": "自检明细"
+    },
+    {
+      "id": "1.19d",
+      "file": "core/claude-switch.sh",
+      "old": "            echo '规则置顶=ok'",
+      "new": "            echo '规则置顶=ok:已验证内核加载'",
+      "count": 1,
+      "note": "自检明细"
+    },
+    {
+      "id": "2.1",
+      "file": "daemons/claude-bodyguard.sh",
+      "old": "    clash-verge)\n        pgrep -f verge-mihomo >/dev/null 2>&1 || ok=0 ;;",
+      "new": "    clash-verge)\n        pgrep -f '[v]erge-mihomo' >/dev/null 2>&1 || ok=0 ;;\n    v-ninja)\n        pgrep -x ninja-mihomo >/dev/null 2>&1 || ok=0 ;;",
+      "count": 1,
+      "note": "新增 v-ninja 分支"
+    },
+    {
+      "id": "2.2",
+      "file": "daemons/claude-bodyguard.sh",
+      "old": "    *)\n        pgrep -f verge-mihomo >/dev/null 2>&1 || ok=0 ;;",
+      "new": "    *)\n        { pgrep -x ninja-mihomo >/dev/null 2>&1 || pgrep -f '[v]erge-mihomo' >/dev/null 2>&1; } || ok=0 ;;",
+      "count": 1,
+      "note": "兜底分支兼容两种内核"
+    },
+    {
+      "id": "3.1",
+      "file": "installer/安装.command",
+      "old": "CLASH_DIR=\"$H/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev\"\nFLCLASH_DIR=\"$H/Library/Application Support/com.follow.clash\"\nif [ -d \"$CLASH_DIR\" ]; then\n    MODE=\"clash-verge\"\nelif [ -d \"$FLCLASH_DIR\" ]; then",
+      "new": "CLASH_DIR_VN=\"$H/Library/Application Support/io.github.clash-verge-ninja.clash-verge-ninja\"\nCLASH_DIR_CV=\"$H/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev\"\nFLCLASH_DIR=\"$H/Library/Application Support/com.follow.clash\"\nif [ -d \"$CLASH_DIR_VN\" ]; then\n    MODE=\"v-ninja\"; CLASH_DIR=\"$CLASH_DIR_VN\"\nelif [ -d \"$CLASH_DIR_CV\" ]; then\n    MODE=\"clash-verge\"; CLASH_DIR=\"$CLASH_DIR_CV\"\nelif [ -d \"$FLCLASH_DIR\" ]; then",
+      "count": 1,
+      "note": "双客户端目录识别"
+    },
+    {
+      "id": "3.2",
+      "file": "installer/安装.command",
+      "old": "echo \"✓ 代理客户端: $MODE\"",
+      "new": "case \"$MODE\" in\n    v-ninja)      CLIENT_NAME=\"Clash V-Ninja\" ;;\n    clash-verge)  CLIENT_NAME=\"Clash Verge\" ;;\n    *)            CLIENT_NAME=\"$MODE\" ;;\nesac\necho \"✓ 代理客户端: $MODE($CLIENT_NAME)\"",
+      "count": 1,
+      "note": "客户端显示名"
+    },
+    {
+      "id": "3.3",
+      "file": "installer/安装.command",
+      "old": "    echo \"  7) bettbox        8) auto(任一命中即活)\"",
+      "new": "    echo \"  7) bettbox        8) auto(任一命中即活)  9) v-ninja(Clash V-Ninja)\"",
+      "count": 1,
+      "note": "菜单文案"
+    },
+    {
+      "id": "3.4",
+      "file": "installer/安装.command",
+      "old": "        8|auto)          MODE=\"auto\" ;;",
+      "new": "        8|auto)          MODE=\"auto\" ;;\n        9|v-ninja)       MODE=\"v-ninja\" ;;",
+      "count": 1,
+      "note": "菜单分支"
+    },
+    {
+      "id": "3.5",
+      "file": "installer/安装.command",
+      "old": "# ---- 1. 自动探测代理组名(仅 Clash Verge;多个 select 组时让用户选,避免静默选错专线) ----\nGRP=\"\"\nif [ \"$MODE\" = \"clash-verge\" ]; then\n    GRPS=()\n    while IFS= read -r g; do GRPS+=(\"$g\"); done < <(awk '\n        /^proxy-groups:/ {f=1; next}\n        f && /^[a-zA-Z]/ {f=0}\n        f && /- name:/ { n=$0; sub(/.*- name: */, \"\", n); gsub(/\"/, \"\", n) }\n        f && /type: *select/ { print n }\n    ' \"$CLASH_DIR/clash-verge.yaml\" 2>/dev/null)",
+      "new": "# Clash 系客户端的组名来源:Clash Verge 读 clash-verge.yaml;V-Ninja 的组在订阅文件里\nclash_config_yaml() {\n    case \"$MODE\" in\n        v-ninja)\n            local cur f\n            cur=$(sed -n 's/^current:[[:space:]]*//p' \"$CLASH_DIR/profiles.yaml\" 2>/dev/null | head -1)\n            if [ -n \"$cur\" ] && [ -f \"$CLASH_DIR/profiles/$cur.yaml\" ]; then\n                echo \"$CLASH_DIR/profiles/$cur.yaml\"; return\n            fi\n            for f in \"$CLASH_DIR\"/profiles/*.yaml; do\n                [ -f \"$f\" ] && grep -q '^proxy-groups:' \"$f\" && { echo \"$f\"; return; }\n            done\n            echo \"$CLASH_DIR/config.yaml\" ;;\n        *) echo \"$CLASH_DIR/clash-verge.yaml\" ;;\n    esac\n}\n\n# ---- 1. 自动探测代理组名(仅 Clash 系;多个 select 组时让用户选,避免静默选错专线) ----\nGRP=\"\"\nif [ \"$MODE\" = \"clash-verge\" ] || [ \"$MODE\" = \"v-ninja\" ]; then\n    GRPS=()\n    CLASH_YAML=$(clash_config_yaml)\n    while IFS= read -r g; do [ -n \"$g\" ] && GRPS+=(\"$g\"); done < <(python3 - \"$CLASH_YAML\" <<'PY_GROUPS'\nimport re\nimport sys\n\ntry:\n    text = open(sys.argv[1], encoding=\"utf-8\", errors=\"replace\").read()\nexcept OSError:\n    raise SystemExit(0)\nmatch = re.search(r\"(?m)^proxy-groups:[ \\t]*$\", text)\nif not match:\n    raise SystemExit(0)\nbody = text[match.end():]\nend = re.search(r\"(?m)^[A-Za-z]\", body)\nif end:\n    body = body[:end.start()]\nlines = body.splitlines()\nindents = [len(line) - len(line.lstrip()) for line in lines if line.strip().startswith(\"-\")]\nif not indents:\n    raise SystemExit(0)\nentry_indent = min(indents)\n\ndef flush(entry):\n    if not entry:\n        return\n    kind = entry.get(\"type\", \"\").strip().strip(\"\\\"'\")\n    name = entry.get(\"name\", \"\").strip().strip(\"\\\"'\")\n    if kind == \"select\" and name:\n        print(name)\n\nentry = {}\nfor line in lines:\n    stripped = line.strip()\n    if not stripped:\n        continue\n    indent = len(line) - len(line.lstrip())\n    if stripped.startswith(\"-\") and indent == entry_indent:\n        flush(entry)\n        entry = {}\n        stripped = stripped[1:].strip()\n        if not stripped or \":\" not in stripped:\n            continue\n        indent = entry_indent + 1\n    if \":\" in stripped and indent > entry_indent:\n        key, value = stripped.split(\":\", 1)\n        key = key.strip()\n        if key in (\"name\", \"type\"):\n            entry[key] = value.strip()\nflush(entry)\nPY_GROUPS\n    )",
+      "count": 1,
+      "note": "组名来源与解析"
+    },
+    {
+      "id": "3.6",
+      "file": "installer/安装.command",
+      "old": "        echo \"未能自动识别你的代理组名,请打开 Clash Verge 查看「代理」页面顶部的组名。\"",
+      "new": "        echo \"未能自动识别你的代理组名,请打开 $CLIENT_NAME 查看「代理」页面顶部的组名。\"",
+      "count": 1,
+      "note": "提示文案"
+    },
+    {
+      "id": "3.7",
+      "file": "installer/安装.command",
+      "old": "# ---- 5. 生成全局扩展脚本(仅 Clash Verge;保留已有 main 与无关配置) ----\nif [ \"$MODE\" = \"clash-verge\" ]; then",
+      "new": "# ---- 5. 生成全局扩展脚本(仅 Clash 系;保留已有 main 与无关配置) ----\nif [ \"$MODE\" = \"clash-verge\" ] || [ \"$MODE\" = \"v-ninja\" ]; then",
+      "count": 1,
+      "note": "写全局脚本的条件"
+    },
+    {
+      "id": "3.8",
+      "file": "installer/安装.command",
+      "old": "# ---- 7. 重启 Clash 使规则生效(仅 Clash Verge) ----\nif [ -z \"$DRYRUN\" ] && [ \"$MODE\" = \"clash-verge\" ]; then\n    osascript -e 'tell application \"Clash Verge\" to quit' >/dev/null 2>&1\n    sleep 2\n    open -a \"Clash Verge\" >/dev/null 2>&1\nfi",
+      "new": "# ---- 7. 重启客户端使规则生效(仅 Clash 系) ----\nif [ -z \"$DRYRUN\" ] && { [ \"$MODE\" = \"clash-verge\" ] || [ \"$MODE\" = \"v-ninja\" ]; }; then\n    osascript -e \"tell application \\\"$CLIENT_NAME\\\" to quit\" >/dev/null 2>&1\n    sleep 2\n    open -a \"$CLIENT_NAME\" >/dev/null 2>&1\nfi",
+      "count": 1,
+      "note": "重启客户端"
+    },
+    {
+      "id": "3.9",
+      "file": "installer/安装.command",
+      "old": "    echo \"接下来需要输入一次开机密码,用于: 安装守护进程(系统目录) + 锁定时区($TZV) + 关闭IPv6\"\n    sudo bash -c \"$SYSCMDS\" && echo \"✓ 系统级配置完成\" || echo \"✗ 系统级配置被取消,可稍后重新运行安装程序\"",
+      "new": "    echo \"接下来会弹出系统授权窗口,请输入管理员账号和密码（无需切换当前用户）\"\n    echo \"用于: 安装守护进程(系统目录) + 锁定时区($TZV) + 关闭IPv6\"\n    if /usr/bin/osascript - \"$SYSCMDS\" <<'ADMIN_AUTH_APPLESCRIPT'\non run argv\n    do shell script (\"/bin/bash -c \" & quoted form of (item 1 of argv)) with administrator privileges\nend run\nADMIN_AUTH_APPLESCRIPT\n    then\n        echo \"✓ 系统级配置完成\"\n    else\n        echo \"✗ 管理员授权被取消或系统级配置失败，请重新运行安装程序\"\n        rm -rf \"$STAGE\"\n        read -n 1 -s -r -p \"按任意键退出...\"\n        exit 1\n    fi",
+      "count": 1,
+      "note": "管理员授权改为系统弹窗(可输入管理员账号密码)"
+    },
+    {
+      "id": "4.1",
+      "file": "app/main.swift",
+      "old": "        (\"clash-verge\", \"Clash Verge\"),",
+      "new": "        (\"clash-verge\", \"Clash Verge\"),\n        (\"v-ninja\", \"Clash V-Ninja\"),",
+      "count": 1,
+      "note": "UI 下拉菜单"
+    },
+    {
+      "id": "3.10",
+      "file": "installer/卸载.command",
+      "old": "sudo launchctl bootout system/local.claude-bodyguard 2>/dev/null\nsudo launchctl bootout system/local.tz-watchdog 2>/dev/null\nsudo launchctl bootout system/local.claude-update 2>/dev/null\nsudo rm -f /Library/LaunchDaemons/local.claude-bodyguard.plist /Library/LaunchDaemons/local.tz-watchdog.plist /Library/LaunchDaemons/local.claude-update.plist\nsudo rm -rf \"/Library/Application Support/claude-switcher\"",
+      "new": "# 系统级组件:一次系统授权弹窗(账号密码填在弹窗里,不需要在终端输入密码)\nADMIN_CMDS=\"launchctl bootout system/local.claude-bodyguard 2>/dev/null; launchctl bootout system/local.tz-watchdog 2>/dev/null; launchctl bootout system/local.claude-update 2>/dev/null; rm -f /Library/LaunchDaemons/local.claude-bodyguard.plist /Library/LaunchDaemons/local.tz-watchdog.plist /Library/LaunchDaemons/local.claude-update.plist; rm -rf '/Library/Application Support/claude-switcher'\"\necho \"接下来会弹出系统授权窗口,请输入管理员账号和密码（用于移除守护进程与系统级文件）\"\nif /usr/bin/osascript - \"$ADMIN_CMDS\" <<'UNINSTALL_ADMIN_APPLESCRIPT'\non run argv\n    do shell script (\"/bin/bash -c \" & quoted form of (item 1 of argv)) with administrator privileges\nend run\nUNINSTALL_ADMIN_APPLESCRIPT\nthen\n    echo \"✓ 系统级组件已移除\"\nelse\n    echo \"✗ 管理员授权被取消,系统级组件未移除；如需彻底清理请重新运行本脚本\"\n    read -n 1 -s -r -p \"按任意键退出...\"\n    exit 1\nfi",
+      "count": 1,
+      "note": "卸载改为系统授权弹窗"
+    },
+    {
+      "id": "3.11",
+      "file": "installer/卸载.command",
+      "old": "echo \"置顶规则提示: 如曾在 Clash Verge 配置过置顶规则,可手动清空 全局扩展配置(Merge.yaml);其他客户端的规则请自行检查。\"",
+      "new": "echo \"置顶规则提示: 如曾在 Clash 系客户端配置过置顶规则,可手动清空 全局扩展配置(Merge.yaml / Script.js);其他客户端的规则请自行检查。\"",
+      "count": 1,
+      "note": "卸载提示文案改为中性"
+    },
+    {
+      "id": "3.12",
+      "file": "installer/安装.command",
+      "old": "# 保镖/时区看门狗脚本:物化到临时目录,由 sudo 段装入 root 所有的系统目录(用户态不可写,防提权)",
+      "new": "# 保镖/时区看门狗脚本:物化到临时目录,由管理员授权段装入 root 所有的系统目录(用户态不可写,防提权)",
+      "count": 1,
+      "note": "注释与实现对齐(不再用 sudo)"
+    }
+  ],
+  "upstream": "1.10.0"
+}

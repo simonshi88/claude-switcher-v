@@ -2,10 +2,16 @@
 # 右键 -> 使用 PowerShell 以管理员身份运行(或在管理员 PowerShell 里执行)
 $ErrorActionPreference = 'Stop'
 $BASE = "$env:USERPROFILE\.claude-switcher"
-$CLASH_DIR = @(
+# Clash 系客户端配置目录:两个 fork 各自识别,V-Ninja 优先
+$CLASH_DIR_VN = @(
+    "$env:APPDATA\io.github.clash-verge-ninja.clash-verge-ninja",
+    "$env:LOCALAPPDATA\io.github.clash-verge-ninja.clash-verge-ninja"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$CLASH_DIR_CV = @(
     "$env:APPDATA\io.github.clash-verge-rev.clash-verge-rev",
     "$env:LOCALAPPDATA\io.github.clash-verge-rev.clash-verge-rev"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$CLASH_DIR = $null
 
 Write-Host "==================================" -ForegroundColor Cyan
 Write-Host "  Claude 账号切换器 · Windows 安装" -ForegroundColor Cyan
@@ -25,8 +31,10 @@ if (-not $claudeExe -and -not $claudeAppx -and -not $claudeData -and $msixData.C
 }
 
 $PROXY_MODE = $null
-if ($CLASH_DIR) {
-    $PROXY_MODE = 'clash-verge'
+if ($CLASH_DIR_VN) {
+    $PROXY_MODE = 'v-ninja'; $CLASH_DIR = $CLASH_DIR_VN
+} elseif ($CLASH_DIR_CV) {
+    $PROXY_MODE = 'clash-verge'; $CLASH_DIR = $CLASH_DIR_CV
 } elseif (Get-Process -Name 'FlClashCore','FlClash' -ErrorAction SilentlyContinue) {
     $PROXY_MODE = 'flclash'
 } elseif (Get-Process -Name 'sing-box' -ErrorAction SilentlyContinue) {
@@ -42,6 +50,7 @@ if (-not $PROXY_MODE) {
     Write-Host "未自动识别到代理客户端,请选择:" -ForegroundColor Yellow
     Write-Host "  1) clash-verge  2) flclash     3) sing-box  4) clashx"
     Write-Host "  5) surge        6) wireguard   7) other     8) auto"
+    Write-Host "  9) v-ninja(Clash V-Ninja)"
     $pick = Read-Host "请输入序号或名称(直接回车=auto)"
     switch ($pick) {
         '1' { $PROXY_MODE = 'clash-verge' }
@@ -52,7 +61,10 @@ if (-not $PROXY_MODE) {
         '6' { $PROXY_MODE = 'wireguard' }
         '7' { $PROXY_MODE = 'other' }
         '8' { $PROXY_MODE = 'auto' }
+        '9' { $PROXY_MODE = 'v-ninja' }
         'clash-verge' { $PROXY_MODE = 'clash-verge' }
+        'v-ninja'     { $PROXY_MODE = 'v-ninja' }
+        'clash-ninja' { $PROXY_MODE = 'v-ninja' }
         'flclash'     { $PROXY_MODE = 'flclash' }
         'sing-box'    { $PROXY_MODE = 'sing-box' }
         'clashx'      { $PROXY_MODE = 'clashx' }
@@ -63,7 +75,12 @@ if (-not $PROXY_MODE) {
         default       { $PROXY_MODE = 'auto' }
     }
 }
-Write-Host "[OK] 代理客户端: $PROXY_MODE" -ForegroundColor Green
+$CLIENT_NAME = switch ($PROXY_MODE) {
+    'v-ninja'     { 'Clash V-Ninja' }
+    'clash-verge' { 'Clash Verge' }
+    default       { $PROXY_MODE }
+}
+Write-Host "[OK] 代理客户端: $PROXY_MODE($CLIENT_NAME)" -ForegroundColor Green
 Write-Host "[OK] 前置检查通过" -ForegroundColor Green
 
 # ---- 1. 出口国家探测(多源兜底;不能是 CN,否则时区会锁错) ----
@@ -202,20 +219,82 @@ if (-not $LOCALE_TARGET) { $LOCALE_TARGET = 'en-US' }
 Write-Host "[OK] 地区识别: 国家=$COUNTRY_TARGET 时区=$ianaTz 格式=$LOCALE_TARGET 来源=$geoSource" -ForegroundColor Green
 Write-Host "[OK] 出口: $ip ($COUNTRY_TARGET)" -ForegroundColor Green
 
-# ---- 2. 自动识别代理组名(仅 Clash Verge) ----
-$grp = 'GLOBAL'
-if ($PROXY_MODE -eq 'clash-verge' -and $CLASH_DIR) {
-    $grp = $null
-    $inGroups = $false; $name = $null
-    foreach ($line in Get-Content "$CLASH_DIR\clash-verge.yaml" -Encoding UTF8 -ErrorAction SilentlyContinue) {
-        if ($line -match '^proxy-groups:') { $inGroups = $true; continue }
-        if ($inGroups -and $line -match '^[a-zA-Z]') { $inGroups = $false }
-        if ($inGroups -and $line -match '- name:\s*(.+)') { $name = $Matches[1].Trim('"',"'",' ') }
-        if ($inGroups -and $line -match 'type:\s*select') { $grp = $name; break }
+# Clash 系客户端的组名来源:Clash Verge 读 clash-verge.yaml;V-Ninja 的组在订阅文件里
+function Get-ClashConfigYaml([string]$Mode, [string]$Dir) {
+    if ($Mode -eq 'v-ninja') {
+        $current = $null
+        $profilesYaml = Join-Path $Dir 'profiles.yaml'
+        if (Test-Path -LiteralPath $profilesYaml) {
+            foreach ($line in @(Get-Content -LiteralPath $profilesYaml -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+                if ($line -match '^current:\s*(.+?)\s*$') { $current = $Matches[1].Trim('"',"'"); break }
+            }
+        }
+        if ($current) {
+            $profile = Join-Path (Join-Path $Dir 'profiles') ($current + '.yaml')
+            if (Test-Path -LiteralPath $profile) { return $profile }
+        }
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $Dir 'profiles') -Filter '*.yaml' -File -ErrorAction SilentlyContinue)) {
+            if (Select-String -LiteralPath $f.FullName -Pattern '^proxy-groups:' -Quiet -ErrorAction SilentlyContinue) { return $f.FullName }
+        }
+        return (Join-Path $Dir 'config.yaml')
     }
-    if (-not $grp) { $grp = Read-Host "未能自动识别代理组名,请打开 Clash Verge 查看后输入" }
-    if (-not $grp) { $grp = 'GLOBAL' }
-    Write-Host "[OK] 代理组: $grp" -ForegroundColor Green
+    return (Join-Path $Dir 'clash-verge.yaml')
+}
+
+# 解析 proxy-groups 里的 select 组名,兼容 "- name: X" 与 "-" 换行 "name: X" 两种 YAML 写法
+function Get-SelectProxyGroups([string]$Path) {
+    $groups = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    function Add-SelectGroup([string]$Name, [string]$Type) {
+        if (-not $Name -or -not $Type) { return }
+        $t = ($Type -replace '\s+#.*$', '').Trim().Trim('"',"'").ToLowerInvariant()
+        if ($t -ne 'select') { return }
+        $g = ($Name -replace '\s+#.*$', '').Trim().Trim('"',"'").Trim()
+        if ($g) { $groups.Add($g) }
+    }
+    $inGroups = $false
+    $name = $null; $type = $null
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        if (-not $inGroups) {
+            if ($line -match '^proxy-groups:\s*(?:#.*)?$') { $inGroups = $true }
+            continue
+        }
+        if ($line -match '^[A-Za-z]') { break }
+        if ($line -match '^\s*-\s*name:\s*(.+?)\s*$') {
+            Add-SelectGroup $name $type
+            $name = $Matches[1]; $type = $null
+            continue
+        }
+        if ($line -match '^\s*-\s*(?:#.*)?$') {
+            Add-SelectGroup $name $type
+            $name = $null; $type = $null
+            continue
+        }
+        if (-not $name -and $line -match '^\s+name:\s*(.+?)\s*$') { $name = $Matches[1]; continue }
+        if (-not $type -and $line -match '^\s+type:\s*(.+?)\s*$') { $type = $Matches[1]; continue }
+    }
+    Add-SelectGroup $name $type
+    return @($groups)
+}
+
+# ---- 2. 自动识别代理组名(仅 Clash 系;多个 select 组时让用户选,避免静默选错专线) ----
+$grp = 'GLOBAL'
+if (($PROXY_MODE -eq 'clash-verge' -or $PROXY_MODE -eq 'v-ninja') -and $CLASH_DIR) {
+    $clashYaml = Get-ClashConfigYaml $PROXY_MODE $CLASH_DIR
+    $groups = @(Get-SelectProxyGroups $clashYaml)
+    if ($groups.Count -eq 1) {
+        $grp = $groups[0]
+    } elseif ($groups.Count -gt 1) {
+        Write-Host "识别到多个 select 代理组,请选择:" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $groups.Count; $i++) { Write-Host ("  {0}) {1}" -f ($i + 1), $groups[$i]) }
+        $pick = Read-Host "请输入序号(直接回车=第一个)"
+        if ($pick -match '^\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $groups.Count) { $grp = $groups[[int]$pick - 1] }
+        else { $grp = $groups[0] }
+    } else {
+        $grp = Read-Host "未能自动识别代理组名,请打开 $CLIENT_NAME 查看后输入"
+        if (-not $grp) { $grp = 'GLOBAL' }
+    }
+    Write-Host "[OK] 代理组: $grp (来源: $(Split-Path -Leaf $clashYaml))" -ForegroundColor Green
     if ($grp -match '[,\r\n]') {
         Write-Host "[WARN] 代理组名包含逗号或换行,规则模式可能无法写入;请改名后重跑安装器" -ForegroundColor Yellow
     }
@@ -286,7 +365,7 @@ if (Test-Path -LiteralPath $versionSrc) {
 }
 [System.IO.File]::WriteAllText((Join-Path $BASE 'version.txt'), $appVersion, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "[OK] 版本: $appVersion" -ForegroundColor Green
-Write-Host "[OK] 核心文件已安装到 $BASE (代理模式: $PROXY_MODE)" -ForegroundColor Green
+Write-Host "[OK] 核心文件已安装到 $BASE (代理模式: $PROXY_MODE / $CLIENT_NAME)" -ForegroundColor Green
 
 # ---- 5. 桌面快捷方式 ----
 $ws = New-Object -ComObject WScript.Shell
@@ -298,11 +377,11 @@ $sc.Save()
 Write-Host "[OK] 桌面快捷方式已创建" -ForegroundColor Green
 
 # ---- 6. 置顶规则:安装阶段不再写 Merge.yaml/Script.js ----
-if ($PROXY_MODE -eq 'clash-verge') {
+if ($PROXY_MODE -eq 'clash-verge' -or $PROXY_MODE -eq 'v-ninja') {
     Write-Host "[OK] 未改动 Clash 规则;请安装后打开切换器点一次「一键修复」完成规则配置" -ForegroundColor Yellow
     Write-Host "     修复会先识别 Clash 模式:全局/直连模式跳过规则,规则模式写入 profiles\Script.js" -ForegroundColor Yellow
 } else {
-    Write-Host "[OK] 非 Clash Verge:请在你的代理客户端中为 Claude 域名添加置顶/直连规则" -ForegroundColor Yellow
+    Write-Host "[OK] 非 Clash 客户端:请在 $CLIENT_NAME 中为 Claude 域名添加置顶/直连规则" -ForegroundColor Yellow
 }
 
 # ---- 7. 系统级配置 ----
@@ -325,12 +404,28 @@ Stop-ScheduledTask -TaskName 'ClaudeBodyguard' -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName 'ClaudeBodyguard'
 Write-Host "[OK] 保镖已注册并启动(计划任务,登录自动运行)" -ForegroundColor Green
 
-# ---- 9. 重启 Clash 使规则生效(仅 Clash Verge) ----
-if ($PROXY_MODE -eq 'clash-verge') {
-    Get-Process -Name 'clash-verge','Clash Verge' -ErrorAction SilentlyContinue | Stop-Process -Force
+# ---- 9. 重启客户端使规则生效(仅 Clash 系) ----
+if ($PROXY_MODE -eq 'clash-verge' -or $PROXY_MODE -eq 'v-ninja') {
+    $appNames = if ($PROXY_MODE -eq 'v-ninja') { @('clash-ninja','Clash V-Ninja','clash-verge-ninja') } else { @('clash-verge','Clash Verge') }
+    $exePatterns = if ($PROXY_MODE -eq 'v-ninja') { @('clash-ninja*.exe','Clash V-Ninja*.exe') } else { @('Clash Verge*.exe','clash-verge*.exe') }
+    # 先记下运行中进程的真实路径(客户端可能装在 D: 等非默认目录)
+    $exePath = $null
+    foreach ($appName in $appNames) {
+        $p = Get-Process -Name $appName -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
+        if ($p -and -not $exePath) { $exePath = $p.Path }
+    }
+    foreach ($appName in $appNames) {
+        Get-Process -Name $appName -ErrorAction SilentlyContinue | Stop-Process -Force
+    }
     Start-Sleep 2
-    $cv = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'Clash Verge*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($cv) { Start-Process $cv.FullName }
+    if (-not $exePath) {
+        $cv = foreach ($pattern in $exePatterns) {
+            Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        $cv = $cv | Select-Object -First 1
+        if ($cv) { $exePath = $cv.FullName }
+    }
+    if ($exePath) { Start-Process $exePath }
 }
 
 Write-Host ""

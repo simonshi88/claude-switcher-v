@@ -11,6 +11,8 @@ if (-not $modeFile -or -not (Test-Path $modeFile)) { $modeFile = Join-Path $BASE
 $PROXY_MODE = if (Test-Path $modeFile) { Get-Content $modeFile -Raw } else { '' }
 if ($PROXY_MODE) { $PROXY_MODE = $PROXY_MODE.Trim() }
 if (-not $PROXY_MODE) { $PROXY_MODE = 'clash-verge' }
+# 兼容旧版 Windows 适配用过的模式名 clash-ninja
+if ($PROXY_MODE -eq 'clash-ninja') { $PROXY_MODE = 'v-ninja' }
 
 # TUN 在线判定:198.18 假IP段优先,否则回退到任意 Up 状态的虚拟网卡(兼容 Astrill/WireGuard/OpenVPN 等)
 function Get-TunStatus {
@@ -26,6 +28,7 @@ function Get-TunStatus {
 function Test-ClientAlive {
     switch ($PROXY_MODE) {
         'clash-verge' { return [bool](Get-Process -Name 'verge-mihomo' -ErrorAction SilentlyContinue) }
+        'v-ninja'     { return [bool](Get-Process -Name 'ninja-mihomo' -ErrorAction SilentlyContinue) }
         'flclash'     { return [bool](Get-Process -Name 'FlClashCore','FlClash' -ErrorAction SilentlyContinue) }
         'sing-box'    { return [bool](Get-Process -Name 'sing-box' -ErrorAction SilentlyContinue) }
         'clashx'      { return [bool](Get-Process -Name 'ClashX' -ErrorAction SilentlyContinue) }
@@ -33,7 +36,7 @@ function Test-ClientAlive {
         'wireguard'   { return [bool](Get-Service -Name 'WireGuardTunnel*' -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running') }
         'auto'        { return $true }
         'other'       { return $true }
-        default       { return [bool](Get-Process -Name 'verge-mihomo' -ErrorAction SilentlyContinue) }
+        default       { return [bool](Get-Process -Name 'ninja-mihomo','verge-mihomo' -ErrorAction SilentlyContinue) }
     }
 }
 
@@ -41,6 +44,7 @@ $offline = $false
 while ($true) {
     if (Test-Path $modeFile) {
         $currentMode = (Get-Content $modeFile -Raw).Trim()
+        if ($currentMode -eq 'clash-ninja') { $currentMode = 'v-ninja' }
         if ($currentMode) { $script:PROXY_MODE = $currentMode }
     }
     $tun = Get-TunStatus

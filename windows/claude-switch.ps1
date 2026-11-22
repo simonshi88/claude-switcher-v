@@ -4,12 +4,14 @@ $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 
 # ============ 安装时可配置项(安装器自动改写) ============
-$PROXY_MODE = "clash-verge"            # 代理客户端: clash-verge|flclash|sing-box|clashx|surge|wireguard|other|auto
+$PROXY_MODE = "clash-verge"            # 代理客户端: clash-verge|v-ninja|flclash|sing-box|clashx|surge|wireguard|other|auto
 $COUNTRY_TARGET = "US"                 # 目标出口国家(安装时按出口自动识别)
 $TZ_TARGET = "Eastern Standard Time"   # Windows 时区ID
 $LOCALE_TARGET = "en-US"               # 地区格式目标(安装/set-region 自动写入)
 $PROXY_GROUP = "GLOBAL"                # Clash 代理组名
 # =======================================================
+# 兼容旧版 Windows 适配用过的模式名 clash-ninja:按 v-ninja 处理(不改写文件,set-client 时自然迁移)
+if ($PROXY_MODE -eq 'clash-ninja') { $PROXY_MODE = 'v-ninja' }
 
 $BASE = Join-Path $env:USERPROFILE ".claude-switcher"
 function Find-ClaudeMsixDataPath {
@@ -36,11 +38,33 @@ $LOG  = Join-Path $BASE "claude-switch.log"
 $CLIENT_LOG = Join-Path $BASE "logs\client.log"
 $CHECK_CONFIG = Join-Path $BASE "checks.json"
 $script:CheckConfig = $null
-$CLASH_DIR = @(
-    (Join-Path $env:APPDATA "io.github.clash-verge-rev.clash-verge-rev"),
-    (Join-Path $env:LOCALAPPDATA "io.github.clash-verge-rev.clash-verge-rev")
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $CLASH_DIR) { $CLASH_DIR = Join-Path $env:APPDATA "io.github.clash-verge-rev.clash-verge-rev" }
+# Clash 系客户端配置目录候选:按客户端模式派生,避免把某个 fork 的目录写死在上游代码里
+# Clash Verge = io.github.clash-verge-rev.*;Clash V-Ninja = io.github.clash-verge-ninja.*
+function Get-ClashDirCandidates([string]$Mode) {
+    $rev = 'io.github.clash-verge-rev.clash-verge-rev'
+    $vn  = 'io.github.clash-verge-ninja.clash-verge-ninja'
+    switch ($Mode) {
+        'v-ninja' { return @($vn) }
+        'auto' {
+            # auto 下按实际运行的内核决定优先级,两种都没装时仍回退上游目录
+            if (Get-Process -Name 'ninja-mihomo','clash-ninja' -ErrorAction SilentlyContinue) { return @($vn, $rev) }
+            return @($rev, $vn)
+        }
+        default { return @($rev) }
+    }
+}
+function Get-ClashDirForMode([string]$Mode) {
+    $ids = @(Get-ClashDirCandidates $Mode)
+    foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
+        if (-not $root) { continue }
+        foreach ($id in $ids) {
+            $p = Join-Path $root $id
+            if (Test-Path -LiteralPath $p) { return $p }
+        }
+    }
+    return (Join-Path $env:APPDATA $ids[0])
+}
+$CLASH_DIR = Get-ClashDirForMode $PROXY_MODE
 # check-update / rules-status / diagnose-proxy 必须只读:不在检查路径上创建任何目录
 if ($args.Count -eq 0 -or ($args[0] -ne 'check-update' -and $args[0] -ne 'rules-status' -and $args[0] -ne 'diagnose-proxy')) {
     New-Item -ItemType Directory -Force -Path "$BASE\accounts" | Out-Null
@@ -329,10 +353,21 @@ function Set-ScriptConfigValue([string]$text, [string]$name, [string]$value) {
     return [regex]::Replace($text, $pattern, $replacement)
 }
 
+# 是否 Clash 系客户端(Clash Verge 与 V-Ninja 都走全局脚本/置顶规则这条路)
+function Test-IsClashMode {
+    return ($PROXY_MODE -eq 'clash-verge' -or $PROXY_MODE -eq 'v-ninja')
+}
+
+# Clash 系内核在线判定:兼容上游 Clash Verge(verge-mihomo)与 V-Ninja(ninja-mihomo)两种内核二进制名
+function Test-ClashCoreUp {
+    return [bool](Get-Process -Name 'ninja-mihomo','verge-mihomo' -ErrorAction SilentlyContinue)
+}
+
 # 代理客户端显示名(供检查细节输出)
 function Get-ProxyName {
     switch ($PROXY_MODE) {
         'clash-verge' { return 'Clash Verge' }
+        'v-ninja'     { return 'Clash V-Ninja' }
         'flclash'     { return 'FlClash' }
         'sing-box'    { return 'sing-box' }
         'clashx'      { return 'ClashX' }
@@ -347,7 +382,8 @@ function Get-ProxyName {
 # 代理客户端在线判定:按安装时识别的客户端分派;auto 任一命中即活,other 只依赖 TUN
 function Test-ProxyAlive {
     switch ($PROXY_MODE) {
-        'clash-verge' { return [bool](Get-Process -Name 'verge-mihomo' -ErrorAction SilentlyContinue) }
+        'clash-verge' { return (Test-ClashCoreUp) }
+        'v-ninja'     { return (Test-ClashCoreUp) }
         'flclash'     { return [bool](Get-Process -Name 'FlClashCore','FlClash' -ErrorAction SilentlyContinue) }
         'sing-box'    { return [bool](Get-Process -Name 'sing-box' -ErrorAction SilentlyContinue) }
         'clashx'      { return [bool](Get-Process -Name 'ClashX' -ErrorAction SilentlyContinue) }
@@ -355,23 +391,23 @@ function Test-ProxyAlive {
         'wireguard'   { return [bool](Get-Service -Name 'WireGuardTunnel*' -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running') }
         'other'       { return $true }
         'auto' {
-            if (Get-Process -Name 'verge-mihomo','FlClashCore','FlClash','sing-box','ClashX','Surge' -ErrorAction SilentlyContinue) { return $true }
+            if (Get-Process -Name 'ninja-mihomo','verge-mihomo','FlClashCore','FlClash','sing-box','ClashX','Surge' -ErrorAction SilentlyContinue) { return $true }
             return [bool](Get-Service -Name 'WireGuardTunnel*' -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running')
         }
-        default { return [bool](Get-Process -Name 'verge-mihomo' -ErrorAction SilentlyContinue) }
+        default { return (Test-ClashCoreUp) }
     }
 }
 
 function Get-Client {
     "client=$PROXY_MODE"
-    'clients=clash-verge,flclash,sing-box,clashx,surge,wireguard,other,auto'
+    'clients=clash-verge,v-ninja,flclash,sing-box,clashx,surge,wireguard,other,auto'
 }
 
 function Set-ClientMode([string]$Mode) {
-    $allowed = @('clash-verge','flclash','sing-box','clashx','surge','wireguard','other','auto')
+    $allowed = @('clash-verge','v-ninja','flclash','sing-box','clashx','surge','wireguard','other','auto')
     if ($allowed -notcontains $Mode) {
         $script:exitCode = 1
-        "FAIL:用法: claude-switch.ps1 set-client <clash-verge|flclash|sing-box|clashx|surge|wireguard|other|auto>"
+        "FAIL:用法: claude-switch.ps1 set-client <clash-verge|v-ninja|flclash|sing-box|clashx|surge|wireguard|other|auto>"
         return
     }
     $selfPath = $PSCommandPath
@@ -391,8 +427,13 @@ function Set-ClientMode([string]$Mode) {
         [System.IO.File]::WriteAllText($selfPath, $newText, (New-Object System.Text.UTF8Encoding($true)))
         [System.IO.File]::WriteAllText($modePath, $Mode, [System.Text.Encoding]::ASCII)
         $script:PROXY_MODE = $Mode
+        $script:CLASH_DIR = Get-ClashDirForMode $Mode
         "OK:代理客户端已设为 $Mode"
-        'INFO:保镖会在下一轮巡检读取新模式；非 Clash Verge 客户端请自行配置 Claude 域名规则'
+        if (Test-IsClashMode) {
+            'INFO:重新运行 checkdetail 生效；置顶规则会在下次一键修复时重新写入'
+        } else {
+            'INFO:保镖会在下一轮巡检读取新模式；请在应用内自行添加 Claude 域名置顶规则'
+        }
     } catch {
         try {
             [System.IO.File]::WriteAllText($selfPath, $oldText, (New-Object System.Text.UTF8Encoding($true)))
@@ -788,18 +829,61 @@ function Test-WebRTC($exitIp) {
     return @{ code = 'ok'; detail = '仅暴露代理IP' }
 }
 
-function Find-ClashVerge {
-    # 优先取正在运行进程的真实路径(最可靠),再回退到常见安装目录
-    $running = Get-Process -Name 'clash-verge','Clash Verge' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path } | Select-Object -First 1
-    if ($running) { return $running.Path }
+# 当前 Clash 系客户端的 App 进程名:只有这两种客户端能自动拉起与重启
+function Get-ProxyAppProcessNames {
+    switch ($PROXY_MODE) {
+        'clash-verge' { return @('clash-verge','Clash Verge') }
+        'v-ninja'     { return @('clash-ninja','Clash V-Ninja','clash-verge-ninja') }
+        default       { return @() }
+    }
+}
+
+# 当前客户端的可执行文件名样式(不同 fork 的 exe 名不一样)
+function Get-ProxyAppExePatterns {
+    if ($PROXY_MODE -eq 'v-ninja') { return @('clash-ninja*.exe', 'Clash V-Ninja*.exe', 'clash-verge-ninja*.exe') }
+    return @('Clash Verge*.exe', 'clash-verge*.exe')
+}
+
+# 按进程已知路径 -> 注册表卸载信息(允许装到 D: 等非默认目录) -> 常见安装目录 依次查找
+function Find-ProxyApp {
+    $names = @(Get-ProxyAppProcessNames)
+    if ($names.Count -gt 0) {
+        $running = Get-Process -Name $names -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path } | Select-Object -First 1
+        if ($running) { return $running.Path }
+    }
+
+    $patterns = @(Get-ProxyAppExePatterns)
+    $dnMatch = if ($PROXY_MODE -eq 'v-ninja') { 'ninja' } else { 'clash.?verge|verge' }
+    foreach ($hive in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+        foreach ($entry in @(Get-ItemProperty $hive -ErrorAction SilentlyContinue)) {
+            $dn = [string]$entry.DisplayName
+            if (-not $dn -or $dn -notmatch $dnMatch) { continue }
+            if ($PROXY_MODE -ne 'v-ninja' -and $dn -match 'ninja') { continue }
+            $icon = ([string]$entry.DisplayIcon) -replace ',\d+\s*$', ''
+            $icon = $icon.Trim().Trim('"')
+            if ($icon -and $icon -match '\.exe$' -and (Test-Path -LiteralPath $icon -PathType Leaf)) { return $icon }
+            $loc = ([string]$entry.InstallLocation).Trim().Trim('"')
+            if (-not $loc -or -not (Test-Path -LiteralPath $loc)) { continue }
+            foreach ($pattern in $patterns) {
+                $hit = Get-ChildItem -LiteralPath $loc -Filter $pattern -File -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if ($hit) { return $hit.FullName }
+            }
+        }
+    }
+
     $roots = @("$env:LOCALAPPDATA\Programs", $env:ProgramFiles,
                [Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))
     foreach ($root in $roots) {
         if (-not $root) { continue }
-        $hit = Get-ChildItem $root -Recurse -Filter "Clash Verge*.exe" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($hit) { return $hit.FullName }
+        foreach ($pattern in $patterns) {
+            $hit = Get-ChildItem $root -Recurse -Filter $pattern -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+        }
     }
     return $null
 }
@@ -962,10 +1046,16 @@ function Set-FlClashControllerSetting([string]$Value) {
     "OK:FlClash 控制端口已设为 $stored"
 }
 
+# Clash 运行时配置候选:V-Ninja 的运行时配置是 config.yaml;上游 Clash Verge 保持原有候选顺序
+function Get-ClashConfigCandidates {
+    if ($PROXY_MODE -eq 'v-ninja') { return @('config.yaml', 'clash-verge.yaml', 'verge.yaml') }
+    return @('clash-verge.yaml', 'config.yaml', 'verge.yaml')
+}
+
 # 解析 Clash 控制接口;Windows 版不使用 unix socket
 function Get-ClashApi {
     if (Test-FlClashClientSelected) { return Get-FlClashApi }
-    foreach ($name in @('clash-verge.yaml', 'config.yaml', 'verge.yaml')) {
+    foreach ($name in @(Get-ClashConfigCandidates)) {
         $yaml = Join-Path $CLASH_DIR $name
         if (-not (Test-Path -LiteralPath $yaml)) { continue }
         $addr = Get-YamlScalar $yaml 'external-controller'
@@ -1017,8 +1107,9 @@ function Invoke-ClashApi([string]$Path, [int]$TimeoutSec = 8) {
 }
 
 function Get-ClashApiHint([string]$reason) {
-    $noEndpoint = '控制接口未配置:检查 Clash Verge 的 external-controller'
-    $connectFailed = '控制接口拒绝连接:Verge 未开外部控制或端口不对'
+    $capp = Get-ProxyName
+    $noEndpoint = "控制接口未配置:检查 $capp 的 external-controller"
+    $connectFailed = "控制接口拒绝连接:$capp 未开外部控制或端口不对"
     if ($PROXY_MODE -eq 'flclash') {
         $noEndpoint = '控制接口未配置:检查 FlClash 的 external-controller，或填写本机端口'
         $connectFailed = '控制接口拒绝连接:FlClash 未开外部控制或端口不对'
@@ -1042,7 +1133,7 @@ function Get-ClashMode {
             if ($m -eq 'global' -or $m -eq 'rule' -or $m -eq 'direct') { return $m }
         }
         if (-not (Test-FlClashClientSelected)) {
-            foreach ($name in @('clash-verge.yaml', 'config.yaml', 'verge.yaml')) {
+            foreach ($name in @(Get-ClashConfigCandidates)) {
                 $p = Join-Path $CLASH_DIR $name
                 if (-not (Test-Path -LiteralPath $p)) { continue }
                 foreach ($line in Get-Content -LiteralPath $p -Encoding UTF8 -ErrorAction SilentlyContinue) {
@@ -1074,7 +1165,7 @@ function Get-ClashRules {
     return @{ available = $true; rules = @($probe.data.rules); reason = '' }
 }
 
-# 内核前 16 条必须包含 13 个域名 + 3 个端口;兼容 DOMAIN-SUFFIX/DomainSuffix 与 AND(...DST-PORT...) 形式
+# 内核前 16 条必须包含 13 个域名 + 3 个端口;兼容 DOMAIN-SUFFIX/DomainSuffix 与 AND(...DST-PORT...)/AND(...DstPort...) 形式
 function Test-PinnedRules($rules) {
     $head = @($rules | Select-Object -First 16)
     if ($head.Count -lt 16) { return $false }
@@ -1085,11 +1176,10 @@ function Test-PinnedRules($rules) {
     $portHits = @($head | ForEach-Object {
         $type = ([string]$_.type).ToLowerInvariant() -replace '[-_]', ''
         $payload = [string]$_.payload
-        if ($type -eq 'dstport' -and ($CLAUDE_PORTS -contains $payload)) { $payload }
-        elseif ($payload -match ('DST-PORT,(' + ($CLAUDE_PORTS -join '|') + ')(?:[,)]|$)')) {
-            foreach ($p in $CLAUDE_PORTS) {
-                if ($payload -match ('DST-PORT,' + [regex]::Escape($p) + '(?:[,)]|$)')) { $p }
-            }
+        foreach ($p in $CLAUDE_PORTS) {
+            if ($type -eq 'dstport' -and $payload.Trim() -eq $p) { $p; continue }
+            # 新版内核把 DST-PORT 规则展开成 AND,((NETWORK,UDP),(DST-PORT,3478)) / ((Network,udp) && (DstPort,3478))
+            if ($payload -match ('(?i)DST-?PORT\s*,\s*' + [regex]::Escape($p) + '\s*[),]')) { $p }
         }
     } | Sort-Object -Unique).Count
     return ($domainHits -eq $CLAUDE_DOMAINS.Count -and $portHits -eq $CLAUDE_PORTS.Count)
@@ -1107,19 +1197,34 @@ function Write-ClashScriptRules {
             $result.message = '代理组名为空或包含逗号/换行'
             return $result
         }
+        # 与 mac 规范 9.2 一致:前 3 条 UDP（AND 形式），后 13 条域名
         $rules = @()
+        foreach ($p in $CLAUDE_PORTS) { $rules += "AND,((NETWORK,UDP),(DST-PORT,$p)),$PROXY_GROUP" }
         foreach ($d in $CLAUDE_DOMAINS) { $rules += "DOMAIN-SUFFIX,$d,$PROXY_GROUP" }
-        foreach ($p in $CLAUDE_PORTS) { $rules += "DST-PORT,$p,$PROXY_GROUP" }
-        $json = ConvertTo-Json -InputObject @($rules) -Compress
+        $rulesJson = ConvertTo-Json -InputObject @($rules) -Compress
+        $groupJson = ConvertTo-Json -InputObject $PROXY_GROUP -Compress
+        # 与 mac 规范 9.1 一致:包装原 main（不替换），运行期校验代理组存在
         $managed = "// >>> claude-switcher managed rules >>>`r`n" +
-            "  const pinnedRules = $json;`r`n" +
-            "  config.rules = pinnedRules.concat((config.rules||[]).filter(r=>!pinnedRules.includes(r)));`r`n" +
+            ";(" + "function () {`r`n" +
+            "  const originalMain = main;`r`n" +
+            "  const pinnedRules = $rulesJson;`r`n" +
+            "  const pinnedGroup = $groupJson;`r`n" +
+            "  main = function (config, ...args) {`r`n" +
+            "    const result = originalMain(config, ...args);`r`n" +
+            "    if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('claude-switcher: main must return a config object');`r`n" +
+            "    const groups = result['proxy-groups'];`r`n" +
+            "    if (!Array.isArray(groups) || !groups.some(function (item) { return item && item.name === pinnedGroup; })) throw new Error('claude-switcher: configured proxy group missing: ' + pinnedGroup);`r`n" +
+            "    if (result.rules !== undefined && !Array.isArray(result.rules)) throw new Error('claude-switcher: rules must be an array');`r`n" +
+            "    result.rules = pinnedRules.concat((result.rules || []).filter(function (rule) { return pinnedRules.indexOf(rule) < 0; }));`r`n" +
+            "    return result;`r`n" +
+            "  };`r`n" +
+            "})();`r`n" +
             "// <<< claude-switcher managed rules <<<"
 
         if (-not $existed) {
             $dir = Split-Path -Parent $scriptPath
             New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
-            $content = "function main(config) {`r`n" + $managed + "`r`n  return config;`r`n}`r`n"
+            $content = "function main(config, profileName) {`r`n  return config;`r`n}`r`n`r`n" + $managed + "`r`n"
             [System.IO.File]::WriteAllText($scriptPath, $content, (New-Object System.Text.UTF8Encoding($false)))
             $result.ok = $true
             $result.changed = $true
@@ -1128,28 +1233,15 @@ function Write-ClashScriptRules {
         }
 
         $existing = [System.IO.File]::ReadAllText($scriptPath)
-        if ($existing -notmatch 'function\s+main\s*\(') {
+        # 先摘掉旧托管块（旧版块写在 main 内部，需要移到函数外做包装），再在文件末尾追加
+        $managedPattern = '(?s)\r?\n?// >>> claude-switcher managed rules >>>.*?// <<< claude-switcher managed rules <<<\r?\n?'
+        $baseText = [regex]::Replace($existing, $managedPattern, '')
+        $baseText = $baseText.TrimEnd()
+        if ($baseText -notmatch 'function\s+main\s*\(') {
             $result.message = 'Script.js 已存在但没有 function main(...),未改写,请手动合并'
             return $result
         }
-        if ($existing -match '// >>> claude-switcher managed rules >>>') {
-            $pattern = '(?s)// >>> claude-switcher managed rules >>>.*?// <<< claude-switcher managed rules <<<'
-            $replacement = $managed.Replace('$', '$$')
-            $updated = [regex]::Replace($existing, $pattern, $replacement)
-        } else {
-            $fn = [regex]::Match($existing, 'function\s+main\s*\(')
-            $braceMatch = [regex]::Match($existing, 'function\s+main\s*\([^)]*\)\s*\{')
-            if ($braceMatch.Success) {
-                $brace = $braceMatch.Index + $braceMatch.Length - 1
-            } else {
-                $brace = $existing.IndexOf('{', $fn.Index + $fn.Length)
-            }
-            if ($brace -lt 0) {
-                $result.message = 'Script.js 的 function main 缺少函数体,未改写'
-                return $result
-            }
-            $updated = $existing.Substring(0, $brace + 1) + "`r`n" + $managed + "`r`n" + $existing.Substring($brace + 1)
-        }
+        $updated = $baseText + "`r`n`r`n" + $managed + "`r`n"
         if ($updated -ceq $existing) {
             $result.ok = $true
             $result.changed = $false
@@ -1287,12 +1379,14 @@ function Remove-LegacyMergeRules {
     }
 }
 
-function Restart-ClashVerge {
-    $cv = Find-ClashVerge
-    if (-not $cv) { return $false }
-    Get-Process -Name 'clash-verge','Clash Verge' -ErrorAction SilentlyContinue | Stop-Process -Force
+function Restart-ProxyClient {
+    $exe = Find-ProxyApp
+    if (-not $exe) { return $false }
+    foreach ($name in @(Get-ProxyAppProcessNames)) {
+        Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force
+    }
     Start-Sleep 2
-    try { Start-Process $cv } catch { return $false }
+    try { Start-Process $exe } catch { return $false }
     return $true
 }
 
@@ -1338,7 +1432,7 @@ function Get-RulesStatus {
     if ($mode -eq 'unknown') { return '规则置顶=warn:无法确认 Clash 模式,未检查规则' }
     $rulesInfo = Get-ClashRules
     if ($rulesInfo.available) {
-        if (Test-PinnedRules $rulesInfo.rules) { return '规则置顶=ok' }
+        if (Test-PinnedRules $rulesInfo.rules) { return '规则置顶=ok:已验证内核加载' }
         return '规则置顶=fail:内核未加载置顶规则'
     }
     if (Test-ClashScriptManaged) { return "规则置顶=warn:规则已写入但无法验证内核加载($(Get-ClashApiHint $rulesInfo.reason))" }
@@ -1573,7 +1667,7 @@ function Invoke-CheckDetail {
 
     $tun = Get-TunStatus
     if ($tun.up) {
-        if ($tun.detail -eq '198.18 假IP段') { "TUN网卡=ok" }
+        if ($tun.detail -eq '198.18 假IP段') { "TUN网卡=ok:198.18 网段已接管" }
         else { "TUN网卡=ok:$($tun.detail)" }
     } else { "TUN网卡=fail:不在线" }
 
@@ -1592,16 +1686,16 @@ function Invoke-CheckDetail {
         $ipState = if ($ipCount -ge 3) { 'warn' } else { 'ok' }
         if (-not $e.ip) { Format-OptionalResult 'IP一致' 'fail' '未获取到出口IP' }
         elseif (-not $lastip) { Format-OptionalResult 'IP一致' $ipState "首次记录$historyWarn" }
-        elseif ($e.ip -eq $lastip) { Format-OptionalResult 'IP一致' $ipState $historyWarn.TrimStart('；') }
+        elseif ($e.ip -eq $lastip) { Format-OptionalResult 'IP一致' $ipState $(if ($historyWarn) { $historyWarn.TrimStart('；') } else { "48h 内 $ipCount 个出口" }) }
         else { Format-OptionalResult 'IP一致' 'warn' "$lastip → $($e.ip)$historyWarn" }
         if ($e.ip) { $e.ip | Out-File -Encoding ascii -NoNewline $lastipFile }
     }
 
     $tz = (Get-TimeZone).Id
-    if ($tz -eq $TZ_TARGET) { "时区=ok" } else { "时区=fail:$tz" }
+    if ($tz -eq $TZ_TARGET) { "时区=ok:$TZ_TARGET" } else { "时区=fail:$tz" }
 
     $cult = [System.Globalization.CultureInfo]::CurrentCulture.Name
-    if ($cult -eq $LOCALE_TARGET) { "地区=ok:$cult" } else { "地区=fail:$cult(期望$LOCALE_TARGET)" }
+    if ($cult -eq $LOCALE_TARGET) { "地区=ok:$LOCALE_TARGET" } else { "地区=fail:$cult(期望$LOCALE_TARGET)" }
 
     $v6off = [bool](Get-NetAdapterBinding -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq $true })
     if (-not $v6off) { "IPv6=ok:已关闭" } else { "IPv6=fail:未关闭" }
@@ -1621,7 +1715,10 @@ function Invoke-CheckDetail {
     }
 
     $bg = Get-ScheduledTask -TaskName 'ClaudeBodyguard' -ErrorAction SilentlyContinue
-    if ($bg) { "保镖=ok" } else { "保镖=fail:未安装" }
+    if ($bg) {
+        $bgState = [string]$bg.State
+        if ($bgState -eq 'Running') { "保镖=ok:计划任务运行中" } else { "保镖=ok:计划任务已注册($bgState)" }
+    } else { "保镖=fail:未安装" }
 
     Get-RulesStatus
 
@@ -1798,22 +1895,22 @@ function Invoke-Check {
 
 function Invoke-Fix {
     "FIX:开始一键修复"
+    $capp = Get-ProxyName
 
-    # A. 拉起代理客户端并等待内核+TUN(仅 Clash Verge 可自动拉起)
-    if ($PROXY_MODE -eq 'clash-verge') {
+    # A. 拉起代理客户端并等待内核+TUN(仅 Clash 系客户端可自动拉起)
+    if (Test-IsClashMode) {
         if (-not (Test-ProxyAlive)) {
-            "FIX:正在启动 Clash Verge..."
-            $cv = Find-ClashVerge
-            if ($cv) { Start-Process $cv } else { "FIX:未找到 Clash Verge 可执行文件,请手动启动" }
+            "FIX:正在启动 $capp..."
+            $exe = Find-ProxyApp
+            if ($exe) { Start-Process $exe } else { "FIX:未找到 $capp 可执行文件,请手动启动" }
         }
         $ok = $false
         for ($i = 0; $i -lt 40; $i++) { if ((Test-ProxyAlive) -and (Test-TunUp)) { $ok = $true; break }; Start-Sleep 1 }
-        if ($ok) { "FIX:代理内核+TUN ✓" } else { "FIX:代理内核/TUN ✗(请打开 Clash Verge 检查节点/线路及 TUN 开关)" }
+        if ($ok) { "FIX:代理内核+TUN ✓" } else { "FIX:代理内核/TUN ✗(请打开 $capp 检查节点/线路及 TUN 开关)" }
     } else {
-        $pname = Get-ProxyName
-        if ((Test-ProxyAlive) -and (Test-TunUp)) { "FIX:代理客户端($pname)+TUN ✓" }
-        elseif (-not (Test-ProxyAlive)) { "FIX:代理客户端($pname)未运行,请手动启动并开启 TUN 模式" }
-        else { "FIX:TUN 未在线($pname),请检查客户端 TUN 开关" }
+        if ((Test-ProxyAlive) -and (Test-TunUp)) { "FIX:代理客户端($capp)+TUN ✓" }
+        elseif (-not (Test-ProxyAlive)) { "FIX:代理客户端($capp)未运行,请手动启动并开启 TUN 模式" }
+        else { "FIX:TUN 未在线($capp),请检查客户端 TUN 开关" }
     }
 
     # B. 时区/IPv6/DNS/保镖(需管理员:通过 UAC 弹一次)
@@ -1836,8 +1933,8 @@ function Invoke-Fix {
     }
 
     # B2. 置顶规则:先识别 Clash 模式,绝不盲目写 Merge.yaml
-    if ($PROXY_MODE -ne 'clash-verge') {
-        "FIX:请在 $(Get-ProxyName) 中自行添加 Claude 域名置顶/直连规则"
+    if (-not (Test-IsClashMode)) {
+        "FIX:请在 $capp 中自行添加 Claude 域名置顶/直连规则"
     } else {
         $clashMode = Get-ClashMode
         if ($clashMode -eq 'unknown') {
@@ -1851,14 +1948,14 @@ function Invoke-Fix {
             }
             if ($legacy.changed) {
                 "FIX:发现历史遗留 Merge 规则,已清理并备份: $($legacy.backup)"
-                if (Restart-ClashVerge) {
-                    "FIX:已重启 Clash Verge 以重新加载配置"
+                if (Restart-ProxyClient) {
+                    "FIX:已重启 $capp 以重新加载配置"
                     if ($clashMode -eq 'global') {
                         $tunOk = Wait-Tun 40
-                        if ((Test-ProxyAlive) -and $tunOk) { "FIX:代理/TUN 已恢复 ✓" } else { "FIX:代理/TUN 未完全恢复,请手动检查 Clash 和 TUN 开关" }
+                        if ((Test-ProxyAlive) -and $tunOk) { "FIX:代理/TUN 已恢复 ✓" } else { "FIX:代理/TUN 未完全恢复,请手动检查 $capp 和 TUN 开关" }
                     }
                 } else {
-                    "FIX:未找到 Clash Verge 可执行文件,请手动重启以完成清理"
+                    "FIX:未找到 $capp 可执行文件,请手动重启以完成清理"
                 }
                 "FIX:$modeLabel,规则不适用,未写入任何规则,已清理历史遗留配置 ✓"
             } else {
@@ -1878,11 +1975,11 @@ function Invoke-Fix {
             if (-not $write.ok) {
                 "FIX:置顶规则 FAIL: $($write.message)"
                 if ($legacy.changed) {
-                    if (Restart-ClashVerge) {
+                    if (Restart-ProxyClient) {
                         Wait-Tun 20 | Out-Null
-                        "FIX:已重启 Clash Verge 应用 Merge 清理"
+                        "FIX:已重启 $capp 应用 Merge 清理"
                     } else {
-                        "FIX:请手动重启 Clash Verge 应用 Merge 清理"
+                        "FIX:请手动重启 $capp 应用 Merge 清理"
                     }
                 }
             } else {
@@ -1894,7 +1991,7 @@ function Invoke-Fix {
                     if ($write.changed) {
                         "FIX:已写入 Script.js 规则并备份: $($write.backup)"
                     }
-                    if (Restart-ClashVerge) {
+                    if (Restart-ProxyClient) {
                         $rulesInfo = Wait-ClashRules 40
                         if (-not $rulesInfo.available) {
                             "FIX:规则已写入但无法验证内核加载($(Get-ClashApiHint $rulesInfo.reason))"
@@ -1904,12 +2001,12 @@ function Invoke-Fix {
                         } else {
                             "FIX:置顶规则验证失败,正在回滚 Script.js..."
                             Restore-ClashScriptChange $write
-                            Restart-ClashVerge | Out-Null
+                            Restart-ProxyClient | Out-Null
                             Wait-Tun 20 | Out-Null
-                            "FIX:置顶规则 FAIL: 验证失败,已回滚 Script.js,请确认 Clash Verge 已启用全局扩展脚本"
+                            "FIX:置顶规则 FAIL: 验证失败,已回滚 Script.js,请确认 $capp 已启用全局扩展脚本"
                         }
                     } else {
-                        "FIX:规则已写入但未找到 Clash Verge 可执行文件,请手动重启后验证"
+                        "FIX:规则已写入但未找到 $capp 可执行文件,请手动重启后验证"
                     }
                 }
             }
@@ -3055,7 +3152,7 @@ function Invoke-RulesStatus {
         "api=source=$($api.source) endpoint=$($api.base) auth=$auth"
     } else {
         if ($PROXY_MODE -eq 'flclash') { 'api=未配置(填写 FlClash 本机端口，或确认 external-controller)' }
-        else { 'api=未配置(检查 Clash Verge 的 external-controller)' }
+        else { "api=未配置(检查 $(Get-ProxyName) 的 external-controller)" }
     }
     $cfg = Invoke-ClashApi '/configs' 5
     if ($cfg.ok) { "configs=ok mode=$(([string]$cfg.data.mode).ToLowerInvariant())" } else { "configs=fail:$($cfg.reason)" }

@@ -7,7 +7,8 @@
 - Windows 10 / 11 (64 位)
 - PowerShell 5.1+（Windows 自带,无需安装）
 - 代理客户端（需支持 TUN 模式），安装器会自动探测并写入 `$PROXY_MODE`:
-  - **Clash Verge** —— 存在配置目录即识别，可由「一键修复」按当前模式配置置顶规则
+  - **Clash Verge** —— 存在配置目录 `io.github.clash-verge-rev.*` 即识别，可由「一键修复」按当前模式配置置顶规则
+  - **Clash V-Ninja** —— 存在配置目录 `io.github.clash-verge-ninja.*` 即识别（优先于 Clash Verge），同属 Clash 系，规则/控制接口走与 Clash Verge 相同的流程
   - **FlClash** —— 识别 `FlClashCore` / `FlClash` 进程
   - **sing-box / ClashX / Surge / WireGuard** —— 按进程或服务识别
   - **其他 TUN 客户端**（Astrill / OpenVPN / Tailscale 等）—— 安装时选 `other`
@@ -51,6 +52,7 @@ Windows 版启动时会静默检查 GitHub 最新 Release，有新版本时在�
 | 客户端 | `$PROXY_MODE` | 存活判定 | 说明 |
 |---|---|---|---|
 | Clash Verge | `clash-verge` | `verge-mihomo` 进程 + TUN | 按 Clash 模式自动配置规则（全局/直连跳过） |
+| Clash V-Ninja | `v-ninja` | `ninja-mihomo` 进程 + TUN | Clash 系 fork，规则/控制接口走同一套流程；配置目录 `%APPDATA%\io.github.clash-verge-ninja.clash-verge-ninja`，组名取自订阅文件 |
 | FlClash | `flclash` | `FlClashCore` / `FlClash` 进程 + TUN | 内核审查读取 `%APPDATA%\com.follow\clash\config.yaml` 的 `external-controller`；没有该地址时再探测 `127.0.0.1:9090` 和该进程自己的本机监听口。主窗口可填写本机端口，保存在 `flclash-controller.txt`。置顶规则仍需自行配置 |
 | sing-box | `sing-box` | `sing-box` 进程 + TUN | 置顶规则需自行配置 |
 | ClashX | `clashx` | `ClashX` 进程 + TUN | 置顶规则需自行配置 |
@@ -59,18 +61,36 @@ Windows 版启动时会静默检查 GitHub 最新 Release，有新版本时在�
 | 其他 TUN 客户端 | `other` | 仅 TUN | 不要求特定进程，避免误杀 |
 | 自动 | `auto` | 任一已知进程/服务 + TUN | 保镖在 `auto` 下同样只查 TUN |
 
-TUN 判定顺序：先看是否存在 `198.18.x.x` 假 IP（Clash 系 fake-ip）；没有则回退到任意处于 `Up` 状态、描述匹配 `TAP/TUN/WireGuard/Wintun/VPN/Tailscale` 的虚拟网卡。198.18 命中时保持原来的 `TUN网卡=ok`；回退命中时显示 `TUN网卡=ok:通用虚拟网卡`。
+TUN 判定顺序：先看是否存在 `198.18.x.x` 假 IP（Clash 系 fake-ip）；没有则回退到任意处于 `Up` 状态、描述匹配 `TAP/TUN/WireGuard/Wintun/VPN/Tailscale` 的虚拟网卡。198.18 命中时显示 `TUN网卡=ok:198.18 网段已接管`；回退命中时显示 `TUN网卡=ok:通用虚拟网卡`。
 
-可在主窗口「代理客户端」下拉框切换，或运行 `claude-switch.ps1 set-client <模式>` / `get-client`。该操作会同时更新核心脚本和 `proxy-mode.txt`，保镖下一轮巡检即使用新模式；切换后自动重新执行完整审计。
+可在主窗口「代理客户端」下拉框切换，或运行 `claude-switch.ps1 set-client <模式>` / `get-client`。该操作会同时更新核心脚本和 `proxy-mode.txt`，并按新客户端重算 Clash 配置目录；保镖下一轮巡检即使用新模式；切换后自动重新执行完整审计。
+
+### Clash 系客户端（Clash Verge / Clash V-Ninja）
+
+两个客户端共用同一套 Clash 系流程（`clash-verge` / `v-ninja`），差异只有这几处：
+
+| 项目 | Clash Verge | Clash V-Ninja |
+|---|---|---|
+| 配置目录 | `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev` | `%APPDATA%\io.github.clash-verge-ninja.clash-verge-ninja` |
+| 内核进程 | `verge-mihomo` | `ninja-mihomo` |
+| 界面进程 / 可执行文件 | `clash-verge` / `Clash Verge*.exe` | `clash-ninja` / `clash-ninja.exe`（可能装在 `D:\Clash V-Ninja` 等非默认目录，查找时会读注册表卸载信息） |
+| 控制接口候选 | `clash-verge.yaml` → `config.yaml` → `verge.yaml` | `config.yaml` → `clash-verge.yaml` → `verge.yaml` |
+| 组名来源 | `clash-verge.yaml` 的 `proxy-groups` | `profiles.yaml` 里 `current:` 指向的订阅文件（组在订阅里） |
+
+配置目录由 `$PROXY_MODE` 派生（`Get-ClashDirForMode`），安装器不再往脚本里写死固定目录，因此 `set-client` 切换后会指向正确的位置。安装器识别顺序为：Clash V-Ninja 目录 → Clash Verge 目录 → FlClash → sing-box → ClashX → Surge → WireGuard → 手动选择（菜单 `9) v-ninja`）。
+
+保镖的计划任务读取 `proxy-mode.txt`：`clash-verge` 只认 `verge-mihomo`，`v-ninja` 只认 `ninja-mihomo`，模式未知时两种内核都认。模式与内核名对上，才不会在内核已下线时漏关 Claude、或在内核正常时误杀。
+
+旧版 Windows 适配曾用 `clash-ninja` 作为模式名：本版启动时会把 `clash-ninja` 按 `v-ninja` 处理（不改写文件，运行 `set-client` 时自然迁移成 `v-ninja`），保镖读取 `proxy-mode.txt` 时同样兼容，升级后不会因为模式名不同而把 V-Ninja 当成未知客户端。
 
 FlClash 的控制端口可以留空自动发现，也可以运行 `get-flclash-controller` / `set-flclash-controller 9090`（或 `127.0.0.1:9090`）。只接受本机地址；`auto` 或空值恢复自动发现。这只用于读取内核的 `/configs` 和 `/rules`，不会改写 FlClash 的配置。
 
 ## Clash 规则与全局模式
 
-「一键修复」会先识别 Clash 当前模式（Mihomo API `/configs`，失败再依次读 `clash-verge.yaml` / `config.yaml` / `verge.yaml` 的 `mode:`），再决定是否动规则：
+「一键修复」会先识别 Clash 当前模式（Mihomo API `/configs`，失败再读运行时配置 `mode:`；Clash Verge 依次读 `clash-verge.yaml` / `config.yaml` / `verge.yaml`，V-Ninja 先读 `config.yaml`），再决定是否动规则：
 
 - **全局 / 直连模式**：规则本来就不生效，修复不写 `Merge.yaml`，也不写 `Script.js`；只有发现旧版遗留的 Merge 规则时才清理并重启一次 Clash。没有遗留时不改动任何配置。
-- **规则模式**：只写 `profiles\Script.js` 的托管块（`// >>> claude-switcher managed rules >>>`），不再写 `Merge.yaml`。写入前备份，重启后通过内核 `/rules` 验证前 16 条规则；验证失败会自动从备份回滚 `Script.js`。规则模式需要在 Clash Verge 中启用「全局扩展脚本」，否则验证会失败并回滚。
+- **规则模式**：只写 `profiles\Script.js` 的托管块（`// >>> claude-switcher managed rules >>>`），不再写 `Merge.yaml`。写入前备份，重启后通过内核 `/rules` 验证前 16 条规则；验证失败会自动从备份回滚 `Script.js`。规则模式需要在 Clash 系客户端（Verge / V-Ninja）中启用「全局扩展脚本」，否则验证会失败并回滚。
 - **无法识别模式**：跳过规则修改，避免误伤。
 - 安装器不再写任何规则；安装完成后请打开切换器点一次「一键修复」完成配置。
 
@@ -94,7 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude-sw
 
 | 括号里的原因 | 含义 | 处理 |
 | --- | --- | --- |
-| `控制接口未配置` | `clash-verge.yaml` / `config.yaml` / `verge.yaml` 里都没有 `external-controller` | 在 Clash Verge 设置里打开「外部控制」并设置端口 |
+| `控制接口未配置` | `clash-verge.yaml` / `config.yaml` / `verge.yaml` 里都没有 `external-controller` | 在 Clash 系客户端设置里打开「外部控制」并设置端口 |
 | `控制接口拒绝连接` | 端口没监听：Verge 没开外部控制、端口不对，或刚重启还没起来 | 确认端口后重启 Verge，等 TUN 就绪再检查 |
 | `控制接口鉴权失败` | `secret` 与运行实例不一致 | 用 `rules-status` 里的 `auth=` 与配置核对 |
 | `控制接口超时` | `/rules` 响应过大或内核无响应 | 稍后重试；`rules-status` 已把超时放宽到 8 秒 |
@@ -240,7 +260,7 @@ claude-switch.ps1 diagnose-proxy --config <私有配置.json>
 ## 已知限制与验证范围
 
 - **本次新增 UI、FlClash、隔离浏览器、代理诊断、加密快照、安装和更新流程尚未做 Windows 真机验收**。仓库中的 Python/XAML 静态检查不等于 Windows 运行验证。可在 Windows PowerShell 中运行隔离回归：`powershell -NoProfile -ExecutionPolicy Bypass -File tests\windows-switch-integration.ps1` 与 `tests\windows-snapshot-integration.ps1`。
-- Clash Verge 的 TUN 开关在 Windows 上如果被更新重置,目前需要手动在设置里重新打开(一键修复会提示)。
+- Clash 系客户端（Verge / V-Ninja）的 TUN 开关在 Windows 上如果被更新重置,目前需要手动在设置里重新打开(一键修复会提示)。
 - 账号快照切换前请确保 Claude 已完全退出(托盘图标也要退出)。若看到 `accounts\<槽位>.new` / `.previous` 或 `staging\Claude.new` / `Claude.old` 残留,说明上次切换被中断；没有有效 `cleanup.json` 归属证明时，先确认数据再清理，不要直接删除。
 - WebRTC 检查在 STUN 全部无响应时显示 `warn:STUN 无响应,未确认 UDP 出口`——「探测不到」不等于「零暴露」。
 - 旧版切换器可能在 `Merge.yaml` 留下 `prepend-rules` / 多文档 `---`。当前「一键修复」会备份并清理，规则模式改用 `Script.js`；全局/直连模式跳过规则，只在需要清理旧 Merge 时重启一次。规则模式重启后验证内核 `/rules` 前 16 条，失败自动回滚。

@@ -255,10 +255,11 @@ $xaml = @"
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="代理客户端" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}"/>
                             <ComboBox x:Name="ProxyClient" MinHeight="36" Margin="0,9,0,0" IsEnabled="False" ToolTip="选择实际使用的代理客户端">
-                                <ComboBoxItem Content="Clash Verge" Tag="clash-verge"/><ComboBoxItem Content="FlClash" Tag="flclash"/>
-                                <ComboBoxItem Content="sing-box" Tag="sing-box"/><ComboBoxItem Content="ClashX" Tag="clashx"/>
-                                <ComboBoxItem Content="Surge" Tag="surge"/><ComboBoxItem Content="WireGuard" Tag="wireguard"/>
-                                <ComboBoxItem Content="其他 TUN 客户端" Tag="other"/><ComboBoxItem Content="自动识别" Tag="auto"/>
+                                <ComboBoxItem Content="Clash Verge" Tag="clash-verge"/><ComboBoxItem Content="Clash V-Ninja" Tag="v-ninja"/>
+                                <ComboBoxItem Content="FlClash" Tag="flclash"/><ComboBoxItem Content="sing-box" Tag="sing-box"/>
+                                <ComboBoxItem Content="ClashX" Tag="clashx"/><ComboBoxItem Content="Surge" Tag="surge"/>
+                                <ComboBoxItem Content="WireGuard" Tag="wireguard"/><ComboBoxItem Content="其他 TUN 客户端" Tag="other"/>
+                                <ComboBoxItem Content="自动识别" Tag="auto"/>
                             </ComboBox>
                             <TextBlock Text="FlClash 控制端口" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,0"/>
                             <TextBox x:Name="FlClashPort" MinHeight="34" Margin="0,6,0,0" ToolTip="留空表示自动发现。可填 9090 或 127.0.0.1:9090，只接受本机地址"/>
@@ -379,7 +380,7 @@ $win = [Windows.Markup.XamlReader]::Load($reader)
 $rows = New-Object System.Collections.ObjectModel.ObservableCollection[Object]
 $win.FindName('CheckList').ItemsSource = $rows
 $checkNames = @('代理内核','TUN网卡','出口IP','IP一致','时区','地区','IPv6','DNS','WebRTC','保镖','规则置顶','客户端语言','ASN属性','生态可达性','IP纯净度','IP代理标记','IP机房属性','IP黑名单')
-$clientModes = @('clash-verge','flclash','sing-box','clashx','surge','wireguard','other','auto')
+$clientModes = @('clash-verge','v-ninja','flclash','sing-box','clashx','surge','wireguard','other','auto')
 $script:isBusy = $false
 $script:environmentReady = $false
 $script:currentClient = ''

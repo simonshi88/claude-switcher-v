@@ -521,7 +521,7 @@ fi
 if [ "${1:-}" = "clash-rules" ]; then
     shift
     exec "${CLAUDE_SWITCHER_PYTHON:-python3}" - "$@" <<'PY_CLASH_RULES'
-"""Install and verify the Clash Verge global script without trusting Merge.yaml text."""
+"""Install and verify the Clash-family global script without trusting Merge.yaml text."""
 import http.client
 import ipaddress
 import json
@@ -547,6 +547,7 @@ SCRIPT_BEGIN = "// >>> claude-switcher managed rules >>>"
 SCRIPT_END = "// <<< claude-switcher managed rules <<<"
 MERGE_BEGIN = "# >>> claude-switcher pinned rules >>>"
 MERGE_END = "# <<< claude-switcher pinned rules <<<"
+CLIENT_MODE = os.environ.get("CLASH_CLIENT_MODE", "clash-verge")
 
 
 def fail(message):
@@ -581,7 +582,9 @@ def read_text(path):
 
 
 def controller_config(clash_dir):
-    for name in ("clash-verge.yaml", "verge.yaml"):
+    names = (("clash-verge.yaml", "config.yaml", "verge.yaml")
+             if CLIENT_MODE == "v-ninja" else ("clash-verge.yaml", "verge.yaml"))
+    for name in names:
         path = clash_dir / name
         unix_path = read_yaml_scalar(path, "external-controller-unix")
         secret = read_yaml_scalar(path, "secret")
@@ -590,7 +593,7 @@ def controller_config(clash_dir):
         if unix_path and hasattr(socket, "AF_UNIX"):
             if not os.path.isabs(unix_path):
                 fail("Clash Unix socket 路径必须为绝对路径")
-            # 生成的配置可能记着已失效的临时 socket(Clash Verge 重启后路径会变);
+            # 生成的配置可能记着已失效的临时 socket(客户端重启后路径会变);
             # 依次探测配置路径与服务实际使用的用户级 socket,跳过已失效的残留文件
             candidates = [unix_path]
             if hasattr(os, "getuid"):
@@ -922,7 +925,7 @@ PY_CLASH_RULES
 fi
 
 # ============ 安装时可配置项(安装程序会自动改写) ============
-PROXY_MODE="clash-verge"       # 代理客户端: clash-verge|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto
+PROXY_MODE="clash-verge"       # 代理客户端: clash-verge|v-ninja|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto
 PROXY_GROUP="IpEqual"          # Clash 代理组名(安装时自动探测)
 COUNTRY_TARGET="US"            # 目标出口国家(安装时按出口自动识别)
 TZ_TARGET="America/New_York"   # 锁定时区,应与出口IP所在城市一致
@@ -932,7 +935,14 @@ LOCALE_TARGET="en_US"          # 锁定地区格式
 DATA="$HOME/Library/Application Support/Claude"
 BASE="$HOME/.claude-switcher"
 LOG="$HOME/Library/Logs/claude-switch.log"
-CLASH_DIR="$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev"
+# Clash 系客户端配置目录:按客户端模式派生,避免把某个 fork 的目录写死在上游代码里
+clash_dir_for_mode() {
+    case "$1" in
+        v-ninja) echo "$HOME/Library/Application Support/io.github.clash-verge-ninja.clash-verge-ninja" ;;
+        *)       echo "$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev" ;;
+    esac
+}
+CLASH_DIR="$(clash_dir_for_mode "$PROXY_MODE")"
 ROUTE_MISSED=""
 KEEP_STAGED=0
 mkdir -p "$BASE/accounts"
@@ -973,10 +983,16 @@ log_result() {
 # TUN 在线判定:存在 fake-ip 网段地址即视为 TUN 已接管(兼容各种 TUN 设备名)
 tun_up() { ifconfig 2>/dev/null | grep -q 'inet 198\.18\.'; }
 
+# 是否 Clash 系客户端(两种 fork 都走全局脚本这条路)
+is_clash_mode() {
+    case "$PROXY_MODE" in clash-verge|v-ninja) return 0 ;; *) return 1 ;; esac
+}
+
 # 代理客户端显示名(供检查细节输出)
 proxy_name() {
     case "$PROXY_MODE" in
         clash-verge)  echo "Clash Verge" ;;
+        v-ninja)      echo "Clash V-Ninja" ;;
         flclash)      echo "FlClash" ;;
         bettbox)      echo "Bettbox" ;;
         shadowrocket) echo "Shadowrocket" ;;
@@ -992,6 +1008,7 @@ proxy_name() {
 proxy_app_name() {
     case "$PROXY_MODE" in
         clash-verge)  echo "Clash Verge" ;;
+        v-ninja)      echo "Clash V-Ninja" ;;
         flclash)      echo "FlClash" ;;
         bettbox)      echo "Bettbox" ;;
         shadowrocket) echo "Shadowrocket" ;;
@@ -1020,23 +1037,27 @@ clashx_alive() {
         || pgrep -x 'ClashX Meta' >/dev/null 2>&1
 }
 
+# Clash 系内核在线判定:兼容上游 Clash Verge(verge-mihomo)与 V-Ninja(ninja-mihomo)两种二进制名
+clash_core_up() { pgrep -x ninja-mihomo >/dev/null 2>&1 || pgrep -f '[v]erge-mihomo' >/dev/null 2>&1; }
+
 # 代理内核在线判定:按安装时识别的客户端分派;auto 时任一命中即活
 proxy_alive() {
     case "$PROXY_MODE" in
-        clash-verge)  pgrep -f verge-mihomo >/dev/null 2>&1 ;;
+        clash-verge)  clash_core_up ;;
+        v-ninja)      clash_core_up ;;
         flclash)      pgrep -f FlClashCore >/dev/null 2>&1 || pgrep -x FlClash >/dev/null 2>&1 ;;
         bettbox)      pgrep -f BettboxCore >/dev/null 2>&1 || pgrep -x Bettbox >/dev/null 2>&1 ;;
         shadowrocket) shadowrocket_up ;;
         sing-box)     pgrep -f sing-box >/dev/null 2>&1 ;;
         clashx)       clashx_alive ;;
         surge)        pgrep -f Surge >/dev/null 2>&1 ;;
-        auto)         pgrep -f verge-mihomo >/dev/null 2>&1 || shadowrocket_up \
+        auto)         clash_core_up || shadowrocket_up \
                       || pgrep -f sing-box >/dev/null 2>&1 \
                       || pgrep -f FlClashCore >/dev/null 2>&1 || pgrep -x FlClash >/dev/null 2>&1 \
                       || pgrep -f BettboxCore >/dev/null 2>&1 || pgrep -x Bettbox >/dev/null 2>&1 \
                       || clashx_alive \
                       || pgrep -f Surge >/dev/null 2>&1 ;;
-        *)            pgrep -f verge-mihomo >/dev/null 2>&1 ;;
+        *)            clash_core_up ;;
     esac
 }
 
@@ -1044,7 +1065,7 @@ proxy_alive() {
 clash_rules() {
     local action="$1"
     shift
-    "${BASH:-/bin/bash}" "$0" clash-rules "$action" "$CLASH_DIR" "$BASE" "$PROXY_GROUP" "${WEBRTC_POLICY:-}" "$@"
+    CLASH_CLIENT_MODE="$PROXY_MODE" "${BASH:-/bin/bash}" "$0" clash-rules "$action" "$CLASH_DIR" "$BASE" "$PROXY_GROUP" "${WEBRTC_POLICY:-}" "$@"
 }
 
 # 只接受运行中内核加载的规则，不再用配置文本或 fake-ip 代替。
@@ -1362,8 +1383,8 @@ check() {
         *) fails="$fails;保镖:状态无法验证" ;;
     esac
 
-    # 置顶规则:Clash Verge 验证运行内核;全局模式下全部流量走代理,规则不适用;其他客户端只看行为检测
-    if [ "$PROXY_MODE" = "clash-verge" ]; then
+    # 置顶规则:Clash 系客户端验证运行内核;全局模式下全部流量走代理,规则不适用;其他客户端只看行为检测
+    if is_clash_mode; then
         [ "$(clash_mode)" = "global" ] || merge_ok || fails="$fails;运行中置顶规则未验证"
     else
         route_ok || fails="$fails;置顶规则缺失(未命中:${ROUTE_MISSED# })"
@@ -1398,7 +1419,7 @@ webrtc_test() {
 # 日常检查与修复共用此判断。先确认规则，再允许探测，避免向已知直连路径发包。
 webrtc_status() {
     local verified result probe_rc assessment mode leak wips w
-    if [ "$PROXY_MODE" = "clash-verge" ]; then
+    if is_clash_mode; then
         mode=$(clash_mode)
         # 全局模式不经过规则匹配,直接按"STUN 结果是否等于当前出口"判断
         if [ "$mode" = "global" ]; then
@@ -1429,7 +1450,7 @@ webrtc_status() {
     fi
     result=$(webrtc_test)
     probe_rc=$?
-    if [ "$PROXY_MODE" = "clash-verge" ]; then
+    if is_clash_mode; then
         assessment=$(clash_rules assess "$1" "$result" "$probe_rc" 2>/dev/null)
     elif [ "$PROXY_MODE" = "flclash" ]; then
         # FlClash 规则由本工具写入，因此允许用户显式选择 reject；默认仍按 proxy 评估。
@@ -1489,7 +1510,7 @@ checkdetail() {
     else
         echo "代理内核=fail:$(proxy_name) 未运行"
     fi
-    if tun_up; then echo 'TUN网卡=ok'; else echo 'TUN网卡=fail:不在线'; fi
+    if tun_up; then echo 'TUN网卡=ok:198.18 网段已接管'; else echo 'TUN网卡=fail:不在线'; fi
     trace=$(curl -s --max-time 8 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null)
     ip=$(echo "$trace" | grep '^ip=' | cut -d= -f2)
     loc=$(echo "$trace" | grep '^loc=' | cut -d= -f2)
@@ -1516,9 +1537,9 @@ checkdetail() {
         optional_result "IP一致" "$ipst" "$ipdt"
     fi
     tz=$(readlink /etc/localtime 2>/dev/null)
-    if [ "$tz" = "/var/db/timezone/zoneinfo/$TZ_TARGET" ]; then echo '时区=ok'; else echo "时区=fail:$tz"; fi
+    if [ "$tz" = "/var/db/timezone/zoneinfo/$TZ_TARGET" ]; then echo "时区=ok:$TZ_TARGET"; else echo "时区=fail:$tz"; fi
     locale=$(defaults read -g AppleLocale 2>/dev/null)
-    if [ "$locale" = "$LOCALE_TARGET" ]; then echo '地区=ok'; else echo "地区=fail:$locale"; fi
+    if [ "$locale" = "$LOCALE_TARGET" ]; then echo "地区=ok:$LOCALE_TARGET"; else echo "地区=fail:$locale"; fi
     v6=$(networksetup -getinfo Wi-Fi 2>/dev/null | grep -i '^IPv6:')
     if echo "$v6" | grep -qi 'off'; then echo 'IPv6=ok:已关闭'; else echo 'IPv6=fail:未关闭'; fi
     if check_disabled "DNS"; then
@@ -1539,12 +1560,12 @@ checkdetail() {
         optional_result "WebRTC" "$wrst" "$wrdt"
     fi
     echo "保镖=$(bodyguard_status)"
-    # 置顶规则:Clash Verge 验证运行内核;全局模式下规则不适用(全部流量已走代理)
-    if [ "$PROXY_MODE" = "clash-verge" ]; then
+    # 置顶规则:Clash 系客户端验证运行内核;全局模式下规则不适用(全部流量已走代理)
+    if is_clash_mode; then
         if [ "$(clash_mode)" = "global" ]; then
             echo '规则置顶=ok:全局模式(全部流量走代理)'
         elif merge_ok; then
-            echo '规则置顶=ok'
+            echo '规则置顶=ok:已验证内核加载'
         else
             echo '规则置顶=fail:未生效'
         fi
@@ -1663,10 +1684,12 @@ fix_flclash() {
 
 # 一键修复:按项自动修复,每步输出结果
 fix() {
+    local capp
+    capp=$(proxy_app_name)
     if [ "$PROXY_MODE" = "flclash" ]; then
         fix_flclash || return 1
     fi
-    if [ "$PROXY_MODE" = "clash-verge" ]; then
+    if is_clash_mode; then
         local policy_result
         if ! policy_result=$(clash_rules policy 2>&1); then
             echo "FIX:WebRTC 策略无效 ✗ $policy_result"
@@ -1677,34 +1700,34 @@ fix() {
     echo "FIX:开始一键修复"
 
     # A. 代理内核 + TUN
-    if [ "$PROXY_MODE" = "clash-verge" ]; then
-        if ! pgrep -f verge-mihomo >/dev/null 2>&1; then
-            echo "FIX:正在启动 Clash Verge..."
-            open -a "Clash Verge"
+    if is_clash_mode; then
+        if ! clash_core_up; then
+            echo "FIX:正在启动 $capp..."
+            open -a "$capp"
         fi
         for i in $(seq 1 40); do
-            pgrep -f verge-mihomo >/dev/null 2>&1 && tun_up && break
+            clash_core_up && tun_up && break
             sleep 1
         done
-        if pgrep -f verge-mihomo >/dev/null 2>&1 && tun_up; then
+        if clash_core_up && tun_up; then
             echo "FIX:代理内核+TUN ✓"
         else
             V="$CLASH_DIR/verge.yaml"
             if [ -f "$V" ] && grep -q '^enable_tun_mode: false' "$V"; then
                 echo "FIX:检测到 TUN 开关被关闭,正在恢复..."
-                osascript -e 'tell application "Clash Verge" to quit' >/dev/null 2>&1
+                osascript -e "tell application \"$capp\" to quit" >/dev/null 2>&1
                 sleep 3
                 sed -i '' 's/^enable_tun_mode: false/enable_tun_mode: true/' "$V"
-                open -a "Clash Verge"
+                open -a "$capp"
                 for i in $(seq 1 40); do
                     tun_up && break
                     sleep 1
                 done
             fi
-            if pgrep -f verge-mihomo >/dev/null 2>&1 && tun_up; then
+            if clash_core_up && tun_up; then
                 echo "FIX:代理内核+TUN ✓(已恢复TUN开关)"
             else
-                echo "FIX:代理内核/TUN ✗(请打开 Clash Verge 检查节点/线路)"
+                echo "FIX:代理内核/TUN ✗(请打开 $capp 检查节点/线路)"
             fi
         fi
     else
@@ -1763,18 +1786,18 @@ ASEOF
     fi
 
     # B2. 更新全局脚本并检查运行规则;写入失败或未加载均不能报成功。全局模式下规则不适用。
-    if [ "$PROXY_MODE" = "clash-verge" ] && [ "$(clash_mode)" = "global" ]; then
+    if is_clash_mode && [ "$(clash_mode)" = "global" ]; then
         echo "FIX:全局模式,置顶规则不适用(全部流量已走代理) ✓"
-    elif [ "$PROXY_MODE" = "clash-verge" ]; then
+    elif is_clash_mode; then
         echo "FIX:写入全局扩展脚本(保留已有 main 与无关配置)..."
         local rules_result
         if ! rules_result=$(write_merge_rules 2>&1); then
             echo "FIX:置顶规则 ✗ $rules_result"
             return 1
         fi
-        osascript -e 'tell application "Clash Verge" to quit' >/dev/null 2>&1
+        osascript -e "tell application \"$capp\" to quit" >/dev/null 2>&1
         sleep 3
-        open -a "Clash Verge"
+        open -a "$capp"
         for i in $(seq 1 40); do tun_up && break; sleep 1; done
         local loaded=0
         for i in $(seq 1 5); do
@@ -1818,8 +1841,8 @@ ASEOF
 set_client() {
     mode="${1:-}"
     case "$mode" in
-        clash-verge|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto) ;;
-        *) echo "FAIL:用法: claude-switch.sh set-client <clash-verge|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto>"; return 1 ;;
+        clash-verge|v-ninja|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto) ;;
+        *) echo "FAIL:用法: claude-switch.sh set-client <clash-verge|v-ninja|flclash|bettbox|shadowrocket|sing-box|clashx|surge|auto>"; return 1 ;;
     esac
     target="${CLAUDE_SWITCHER_CORE:-}"
     if [ -z "$target" ]; then
@@ -1833,20 +1856,25 @@ set_client() {
     sed -i '' "s|^PROXY_MODE=\"[^\"]*\"|PROXY_MODE=\"$mode\"|" "$target" || { echo "FAIL:写入失败"; return 1; }
     grep -q "^PROXY_MODE=\"$mode\"" "$target" || { echo "FAIL:校验失败"; return 1; }
     PROXY_MODE="$mode"
+    CLASH_DIR="$(clash_dir_for_mode "$PROXY_MODE")"
     echo "OK:代理客户端已设为 $mode"
     guard_state=$(bodyguard_status)
     case "$guard_state" in
         fail:未安装) echo "INFO:保镖尚未安装,checkdetail 会提示未安装" ;;
         fail:*) echo "WARN:保镖校验未通过(${guard_state#fail:});请重新运行安装器同步 root 守护脚本(需管理员权限),完成前不要启动 Claude" ;;
     esac
-    echo "INFO:重新运行 checkdetail 生效;非 Clash 客户端请在应用内自行添加 Claude 域名置顶规则"
+    if is_clash_mode; then
+        echo "INFO:重新运行 checkdetail 生效;置顶规则会在下次 fix 时重新写入"
+    else
+        echo "INFO:重新运行 checkdetail 生效;请在应用内自行添加 Claude 域名置顶规则"
+    fi
     return 0
 }
 
 # 只读输出当前代理客户端(供 UI 下拉高亮),同时列出全部支持项
 get_client() {
     echo "client=$PROXY_MODE"
-    echo "clients=clash-verge,flclash,bettbox,shadowrocket,sing-box,clashx,surge"
+    echo "clients=clash-verge,v-ninja,flclash,bettbox,shadowrocket,sing-box,clashx,surge"
 }
 
 # 地区自适应:按当前出口国家一键重设 国家/时区/地区格式(换了国家节点后运行)
