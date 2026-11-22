@@ -83,13 +83,24 @@ if (-not $Version) {
     }
 }
 if (-not $Version) {
-    # 源码仓库没有 VERSION 文件时,用最近的 git tag(如 v1.10.0)
+    # 源码仓库没有 VERSION 文件时，用最近的 git tag（如 v1.10.0）。
+    # 先试 $Source 本身（windows 目录也在仓库内），再试它的上一级。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        $tag = (& git -C (Split-Path -Parent $Source) describe --tags --abbrev=0 2>$null)
-        if ($tag) { $Version = ([string]$tag).Trim() -replace '^[vV]', '' }
-    } catch {}
+        foreach ($repoPath in @($Source, (Split-Path -Parent $Source))) {
+            $tag = (& git -C $repoPath describe --tags --abbrev=0 2>$null)
+            if (-not $tag) { $tag = (& git -C $repoPath describe --tags --always 2>$null) }
+            if ($tag) { $Version = (([string]$tag).Trim() -replace '^[vV]', ''); break }
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
 }
-if (-not $Version) { $Version = 'unknown' }
+if (-not $Version) {
+    Write-Host "[WARN] 未能确定版本号（没有 VERSION 且不是 git 仓库）；将写入 unknown，可用 -Version 1.10.0 指定" -ForegroundColor Yellow
+    $Version = 'unknown'
+}
 
 # 旧配置
 $oldCorePath = Join-Path $Base 'claude-switch.ps1'

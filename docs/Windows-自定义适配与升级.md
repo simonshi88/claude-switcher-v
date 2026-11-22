@@ -186,8 +186,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\apply_vninja_windows
 
 仍需管理员、不在脚本范围内：锁时区、设置地区格式、关闭 IPv6、重注册计划任务。
 
-**`version.txt` 必须写成本次上游版本。** 如果系统里是旧版本号，界面会提示更新；点「一键更新」会下载官方原版，把 v-ninja 适配覆盖掉。
+**`version.txt` 必须写成本次上游版本。**部署脚本会优先读 VERSION，其次用 git describe --tags（源码仓库）；仍取不到时可用 -Version 1.10.0 显式指定。 如果系统里是旧版本号，界面会提示更新；点「一键更新」会下载官方原版，把 v-ninja 适配覆盖掉。
 
+### 5.1 可选：IP 信誉四联检（1.10.0 新增）
+
+1.10.0 新增 `IP纯净度` / `IP代理标记` / `IP机房属性` / `IP黑名单` 四项检查，数据来自外部信誉接口。**默认没有配置数据源**，所以显示 `warn:未配置信誉数据源`（黄色「警」），不是故障，也不影响 `check` 通过。
+
+- **想启用**：在 `checks.json` 里加 `ipReputation`（URL 必须 https；接口返回 JSON 里带 `fraud_score` / `is_proxy` / `is_datacenter` / `blacklist` 一类字段即可，解析器兼容多种命名）：
+
+  ```json
+  {
+    "ipReputation": {
+      "url": "https://example.com/api/ip/{ip}",
+      "key": "你的密钥",
+      "threshold": 70,
+      "cacheDays": 7
+    }
+  }
+  ```
+
+- **想关闭**：设置页取消勾选，或在 `disabled` 里加这四项：
+
+  ```json
+  {"disabled":["IP纯净度","IP代理标记","IP机房属性","IP黑名单"]}
+  ```
+
+- 界面只提供开关，不提供 URL/Key 编辑；用 `checks.json`（或 `set-check-config`）写入。中文参数走命令行容易被控制台编码破坏，建议直接编辑 `checks.json`（UTF-8，无 BOM）。
 ## 6. 验证清单
 
 ```powershell
