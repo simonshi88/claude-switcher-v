@@ -73,7 +73,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\apply_vninja_windows
 | 1.13 | L1287-1298 | Restart-ClashVerge → Restart-ProxyClient |
 | 1.14 | L1338-1344 | 规则置顶成功时带明细 |
 | 1.15 | L1573-1579 | TUN 网卡成功时带明细 |
-| 1.16 | L1592-1607 | IP 一致 / 时区 / 地区成功时带明细 |
+| 1.16 | L1592-1607 | IP 一致 / 时区 / 地区明细 + IPv6 判定（忽略 TUN/Wintun，检查真实 IPv6 出口） |
 | 1.17 | L1621-1627 | 保镖成功时带明细 |
 | 1.18 | L1798-1819 | 一键修复：取客户端名、Clash 系判定、启动文案 |
 | 1.19 | L1836-1843 | 一键修复：非 Clash 分支文案用客户端名 |
@@ -212,6 +212,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\apply_vninja_windows
   ```
 
 - 界面只提供开关，不提供 URL/Key 编辑；用 `checks.json`（或 `set-check-config`）写入。中文参数走命令行容易被控制台编码破坏，建议直接编辑 `checks.json`（UTF-8，无 BOM）。
+### 5.2 IPv6 怎么判定
+
+- **旧逻辑**：`Get-NetAdapterBinding -ComponentID ms_tcpip6` 里只要有一块网卡 `Enabled`，就输出 `IPv6=fail:未关闭`。
+- **问题**：Clash 的 TUN 网卡（`Meta`，Wintun）在每次客户端启动/重启时重建，默认带 `ms_tcpip6` 绑定，但通常只有 `fe80::` 链路本地地址、没有 `::/0` 路由，实际出不了 IPv6。结果就是关掉后一重启又报“未关”。
+- **新逻辑**（已包含在规则 1.16）：
+  1. 存在**非链路本地** IPv6 地址（`fe80:` / `::1` 之外）或 `::/0` 默认路由 → `IPv6=fail:仍有 IPv6 出口(...)`；
+  2. 否则只看**非隧道网卡**（排除 `Tunnel|Wintun|TAP|Tailscale|VPN`）的 `ms_tcpip6`：有启用 → `IPv6=fail:未关闭(网卡名)`；
+  3. 只剩隧道网卡启用 → `IPv6=ok:已关闭(仅 TUN 网卡启用)`。
+
+想真正关闭物理网卡的 IPv6（管理员 PowerShell）：
+
+```powershell
+Get-NetAdapterBinding -ComponentID ms_tcpip6 | Where-Object Enabled | Disable-NetAdapterBinding -Confirm:$false
+```
+
+TUN 网卡（`Meta`）不用管：它会被客户端重建，检查也已忽略它。
 ## 6. 验证清单
 
 ```powershell
@@ -238,6 +254,7 @@ $core = "$env:USERPROFILE\.claude-switcher\claude-switch.ps1"
 | 组名解析不到 / 组名对不上 | V-Ninja 的组在订阅文件里，且组名必须完全一致 | 规则 3.6；`$PROXY_GROUP` 从订阅里复制 |
 | `规则置顶=fail` | 内核把 `DST-PORT` 展开成 `AND(...DstPort...)` | 规则 1.12 |
 | 保镖把 Claude 关了 | 保镖模式/内核名不匹配 | 规则 2.2 / 2.3；确认 `proxy-mode.txt` 与核心 `$PROXY_MODE` 一致 |
+| IPv6 一直提示未关 | Clash TUN（Meta，Wintun）网卡启用 IPv6 但没有 IPv6 出口 | 已在新判定里忽略隧道网卡，详见 5.2 |
 | 升级后又得改一遍 | 手改上游文件、没进规则表 | 用本套规则表；新改动先补 JSON |
 | 官方一键更新后适配没了 | 官方包不含 v-ninja，且会保留 `PROXY_MODE=v-ninja` | 先打补丁再部署；或升级后重跑本流程 |
 

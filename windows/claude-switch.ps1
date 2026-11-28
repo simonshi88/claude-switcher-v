@@ -1697,8 +1697,23 @@ function Invoke-CheckDetail {
     $cult = [System.Globalization.CultureInfo]::CurrentCulture.Name
     if ($cult -eq $LOCALE_TARGET) { "地区=ok:$LOCALE_TARGET" } else { "地区=fail:$cult(期望$LOCALE_TARGET)" }
 
-    $v6off = [bool](Get-NetAdapterBinding -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq $true })
-    if (-not $v6off) { "IPv6=ok:已关闭" } else { "IPv6=fail:未关闭" }
+    # IPv6 判定:只统计会真正出网的网卡。Clash 的 TUN(Wintun/Tunnel)网卡随客户端重建,
+    # 默认带 ms_tcpip6 绑定,但通常只有 fe80:: 链路本地地址、没有 ::/0 路由,不能算"未关"。
+    $v6all = @(Get-NetAdapterBinding -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq $true })
+    $v6bind = @($v6all | Where-Object { $_.InterfaceDescription -notmatch 'Tunnel|Wintun|TAP|Tailscale|VPN' })
+    $v6global = @(Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(fe80:|::1)' })
+    $v6route = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue)
+    if ($v6global.Count -gt 0 -or $v6route.Count -gt 0) {
+        $v6names = @($v6global | ForEach-Object { "$($_.InterfaceAlias)=$($_.IPAddress)" })
+        if ($v6names.Count -eq 0) { $v6names = @($v6route | ForEach-Object { $_.InterfaceAlias }) }
+        "IPv6=fail:仍有 IPv6 出口($($v6names -join ','))"
+    } elseif ($v6bind.Count -gt 0) {
+        "IPv6=fail:未关闭($((@($v6bind | ForEach-Object { $_.Name }) -join ',')))"
+    } elseif ($v6all.Count -gt 0) {
+        "IPv6=ok:已关闭(仅 TUN 网卡启用)"
+    } else {
+        "IPv6=ok:已关闭"
+    }
 
     if (Test-CheckDisabled 'DNS') {
         Format-OptionalResult 'DNS' 'ok'
