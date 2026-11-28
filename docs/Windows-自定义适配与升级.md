@@ -218,8 +218,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\apply_vninja_windows
 - **问题**：Clash 的 TUN 网卡（`Meta`，Wintun）在每次客户端启动/重启时重建，默认带 `ms_tcpip6` 绑定，但通常只有 `fe80::` 链路本地地址、没有 `::/0` 路由，实际出不了 IPv6。结果就是关掉后一重启又报“未关”。
 - **新逻辑**（已包含在规则 1.16）：
   1. 存在**非链路本地** IPv6 地址（`fe80:` / `::1` 之外）或 `::/0` 默认路由 → `IPv6=fail:仍有 IPv6 出口(...)`；
-  2. 否则只看**非隧道网卡**（排除 `Tunnel|Wintun|TAP|Tailscale|VPN`）的 `ms_tcpip6`：有启用 → `IPv6=fail:未关闭(网卡名)`；
-  3. 只剩隧道网卡启用 → `IPv6=ok:已关闭(仅 TUN 网卡启用)`。
+  2. 否则只看**物理网卡**（`Get-NetAdapter -Physical`，如 WLAN / 以太网）的 `ms_tcpip6`：有启用 → `IPv6=fail:未关闭(网卡名)`；
+  3. 只剩虚拟 / TUN 网卡启用 → `IPv6=ok:已关闭(仅虚拟/TUN 网卡启用)`。
+     这类网卡会随服务重建，默认带 IPv6 绑定但没有 IPv6 出口，例如 Clash 的 `Meta`（Wintun）、`vEthernet (WSL (Hyper-V firewall))`、`vEthernet (FSE HostVnic)`、VMware 虚拟网卡。
 
 想真正关闭物理网卡的 IPv6（管理员 PowerShell）：
 
